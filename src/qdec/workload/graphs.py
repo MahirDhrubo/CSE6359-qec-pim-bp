@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as sp
 import stim
 
-from qdec.contracts import GRAPH_STATS_KEYS  # noqa: F401  (keys graph_stats must return)
+from qdec.contracts import GRAPH_STATS_KEYS
 
 
 def dem_to_graph(circuit: stim.Circuit) -> dict:
@@ -73,4 +73,15 @@ def graph_stats(H: sp.csr_matrix) -> dict[str, int]:
     Contract: written as JSON to GRAPHS_DIR / f"{code}_d{d}_p{p:g}.json"; read by P2 cost model.
     Owner:   P1
     """
-    raise NotImplementedError
+    H = sp.csr_matrix(H)
+    H.eliminate_zeros()
+    n_checks, n_vars = H.shape
+    stats = {
+        "n_vars": n_vars,
+        "n_checks": n_checks,
+        "n_edges": H.nnz,
+        "max_var_deg": H.getnnz(axis=0).max(initial=0),
+        "max_check_deg": H.getnnz(axis=1).max(initial=0),
+    }
+    # plain ints so json.dumps works (numpy ints are not JSON-serializable)
+    return {k: int(stats[k]) for k in GRAPH_STATS_KEYS}

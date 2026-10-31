@@ -1,12 +1,14 @@
 # OWNER: P1
+import json
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
 import stim
 
-from qdec.contracts import QUICK_GRID
+from qdec.contracts import GRAPH_STATS_KEYS, QUICK_GRID
 from qdec.workload.circuits import make_circuit
-from qdec.workload.graphs import _merged_columns, dem_to_graph
+from qdec.workload.graphs import _merged_columns, dem_to_graph, graph_stats
 
 
 @pytest.fixture(scope="module", params=QUICK_GRID, ids=lambda w: w.tag)
@@ -60,3 +62,19 @@ def test_duplicate_errors_merged_as_xor():
     assert g["H"].shape == (2, 2) and col_of.tolist() == [0, 0, 1]
     np.testing.assert_allclose(g["priors"], [0.1 + 0.2 - 2 * 0.1 * 0.2, 0.3])
     assert g["L"].toarray().tolist() == [[1, 0]]
+
+
+def test_graph_stats_small_example():
+    H = sp.csr_matrix(np.array([[1, 1, 0, 1], [0, 1, 1, 0], [0, 1, 0, 0]], dtype=np.uint8))
+    s = graph_stats(H)
+    assert tuple(s) == GRAPH_STATS_KEYS
+    assert s == {"n_vars": 4, "n_checks": 3, "n_edges": 6, "max_var_deg": 3, "max_check_deg": 3}
+
+
+def test_graph_stats_real_graph_is_json_ready(built):
+    _, g = built
+    s = graph_stats(g["H"])
+    assert tuple(s) == GRAPH_STATS_KEYS and all(type(v) is int for v in s.values())
+    assert json.loads(json.dumps(s)) == s
+    assert s["n_edges"] == g["H"].nnz
+    assert (s["n_checks"], s["n_vars"]) == g["H"].shape
