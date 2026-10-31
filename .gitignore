@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# environments
+.venv/
+venv/
+.env
+
+# generated data (regenerate with `make data`)
+data/
+*.parquet
+*.npz
+
+# placeholder figures from `--mock` runs; real results/ IS committed
+results/mock/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store

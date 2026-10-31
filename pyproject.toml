@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qdec"
+version = "0.1.0"
+description = "DecodeCache + PIM-BP: cached + processing-in-memory BP decoding for real-time QEC (course project)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "stim",
+    "sinter",
+    "ldpc>=2.0",
+    "pymatching>=2.0",
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",
+    "matplotlib",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+qdec = ["costmodel/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# test_contracts.py is shared; tests/p1_*, p2_*, p3_* belong to each owner.
+python_files = ["test_*.py", "p[123]_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

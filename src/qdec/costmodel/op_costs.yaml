@@ -1,0 +1,49 @@
+# OWNER: P2
+# Per-operation hardware costs. Every number here is MODELED, never measured.
+# Fill latency_ns / energy_pj and replace source with a citation (paper, table, page).
+# Units: latency_ns per operation; energy_pj per operation (per byte for dram_*).
+
+sram_xor:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+sram_min_search:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+bitserial_add:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+convergence_or_reduce:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+cam_search:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+dram_read_byte:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+dram_write_byte:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+cpu_op:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
+
+osd_ns:
+  latency_ns: null
+  energy_pj: null
+  source: "TODO"
