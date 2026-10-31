@@ -4,7 +4,9 @@
 The message range is llr_max = R x (largest channel LLR) for each R in --ranges. For every
 (bits, R) we decode the same shots as the float reference and report LER with 95% Wilson CIs
 plus an exact paired McNemar test (quantized fails more often than float?). A config passes
-when the CIs overlap and the paired test is not significant (p >= 0.05).
+when the CIs overlap and the paired test is not significant (p >= 0.05). The pick is the
+smallest passing quant_bits whose OSD rate stays within --osd-tol x float's: LER alone would
+accept configs that send far more shots to the slow OSD path (4 bits: 68% vs 38% at d5).
 
 Tune on TRAIN shots (default), then confirm the pick on TEST with --seed test --bits B
 --ranges R, so the reported LER is not tuned on the shots it is measured on.
@@ -81,9 +83,15 @@ def _show(r: dict) -> None:
           f"({r['seconds']:.0f}s)", flush=True)
 
 
-def pick(df: pd.DataFrame) -> pd.Series | None:
-    """Smallest passing quant_bits; among its ranges the lowest LER, then lowest OSD rate."""
-    q = df[df["quant_bits"].notna() & df["passes"]]
+# Team decision 2026-10-31 (T11): quantized OSD rate may be at most 1.15x the float one.
+OSD_TOL = 1.15
+
+
+def pick(df: pd.DataFrame, osd_tol: float = OSD_TOL) -> pd.Series | None:
+    """Smallest quant_bits that passes on LER with OSD rate <= osd_tol x float's; among its
+    ranges the lowest LER, then lowest OSD rate."""
+    float_osd = df.loc[df["quant_bits"].isna(), "osd_frac"].iloc[0]
+    q = df[df["quant_bits"].notna() & df["passes"] & (df["osd_frac"] <= osd_tol * float_osd)]
     if q.empty:
         return None
     q = q[q["quant_bits"] == q["quant_bits"].min()]
@@ -98,6 +106,8 @@ def main(argv=None) -> pd.DataFrame:
     ap.add_argument("--bits", default="3,4,5,6,8")
     ap.add_argument("--ranges", default="1,1.5,2,3")
     ap.add_argument("--shots", type=int, default=None)
+    ap.add_argument("--osd-tol", type=float, default=OSD_TOL,
+                    help="max quantized/float OSD-rate ratio for the pick")
     args = ap.parse_args(argv)
 
     matches = [w for w in QUICK_GRID if w.distance == args.d and w.p == args.p]
@@ -111,12 +121,13 @@ def main(argv=None) -> pd.DataFrame:
     out = TRACES_DIR / f"quant_sweep_{w.tag}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False)
-    best = pick(df)
+    best = pick(df, args.osd_tol)
     if best is None:
-        print("no quantized config passes")
+        print(f"no quantized config passes (LER and OSD rate <= {args.osd_tol:g}x float)")
     else:
         print(f"pick: quant_bits={int(best['quant_bits'])} range=x{best['range_x']:g} "
-              f"(LER {best['ler']:.2e} vs float {df.iloc[0]['ler']:.2e})")
+              f"(LER {best['ler']:.2e} vs float {df.iloc[0]['ler']:.2e}; OSD "
+              f"{best['osd_frac']:.1%} vs {df.iloc[0]['osd_frac']:.1%})")
     print(f"wrote {out}")
     return df
 

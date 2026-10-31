@@ -4,9 +4,17 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from qdec.contracts import FUNCTIONAL_COLS, Workload  # noqa: F401
-from qdec.workload.bp_minsum import MinSumBP
+from qdec import io
+from qdec.contracts import FUNCTIONAL_COLS, GRAPHS_DIR, SHOTS_DIR, Workload
+from qdec.workload.baselines import ALPHA, MAX_ITERS, OSD_METHOD, OSD_ORDER, matching_decode_batch
+from qdec.workload.bp_minsum import MinSumBP, channel_llrs
+from qdec.workload.circuits import make_circuit
 from qdec.workload.osd import OSD
+
+# T11 decision (2026-10-31, d5 p3e-3 TRAIN sweep): smallest width that matches float LER
+# (paired McNemar p=0.30) and keeps the OSD rate within 1.15x float (42.2% vs 37.7%).
+QUANT_BITS = 5
+LLR_RANGE_X = 1.0  # llr_max = this x the largest channel LLR of the workload's graph
 
 
 def minsum_bposd_batch(
@@ -58,5 +66,37 @@ def run_functional(w: Workload) -> pd.DataFrame:
     Outputs: DataFrame matching contracts.FUNCTIONAL_COLS, one row per shot (shot_id = row index).
     Contract: written via io.write_table to TRACES_DIR / f"functional_{w.tag}.parquet".
     Owner:   P1
+
+    bp_iters / bp_converged / osd_ran describe the quantized decoder (the system being modeled).
+    fail_bp_float uses our float BP + the same OSD, so the quantized-vs-float comparison is
+    paired and differs only in BP messages (float BP+OSD matches ldpc BpOsdDecoder; see tests).
     """
-    raise NotImplementedError
+    s = io.load_npz(SHOTS_DIR / f"{w.tag}.npz")
+    g = io.load_npz(GRAPHS_DIR / f"{w.code}_d{w.distance}_p{w.p:g}.npz")
+    dets, obs = s["dets"], s["obs"]
+    H, L, priors = g["H"], g["L"], g["priors"]
+    common = {"alpha": ALPHA, "max_iters": MAX_ITERS, "osd_order": OSD_ORDER,
+              "osd_method": OSD_METHOD}
+    llr_max = LLR_RANGE_X * float(channel_llrs(priors).max())
+    q = minsum_bposd_batch(H, L, priors, dets, obs, quant_bits=QUANT_BITS, llr_max=llr_max,
+                           **common)
+    f = minsum_bposd_batch(H, L, priors, dets, obs, quant_bits=None, llr_max=None, **common)
+    n = dets.shape[0]
+    if w.code == "surface":
+        fail_matching = pd.array(matching_decode_batch(make_circuit(w), dets, obs)["fail"],
+                                 dtype="boolean")
+    else:  # matching does not apply to the gross code's hypergraph
+        fail_matching = pd.array([pd.NA] * n, dtype="boolean")
+    df = pd.DataFrame({
+        "shot_id": np.arange(n),
+        "tag": w.tag,
+        "n_defects": dets.sum(axis=1),
+        "quant_bits": QUANT_BITS,
+        "bp_iters": q["bp_iters"],
+        "bp_converged": q["bp_converged"],
+        "osd_ran": q["osd_ran"],
+        "fail_bp_osd": q["fail"],
+        "fail_bp_float": f["fail"],
+        "fail_matching": fail_matching,
+    })
+    return df.astype(FUNCTIONAL_COLS)

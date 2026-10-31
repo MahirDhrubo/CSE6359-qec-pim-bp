@@ -38,7 +38,7 @@ def test_sweep_rows_and_csv(ran):
     assert list(on_disk.columns) == list(df.columns) and len(on_disk) == 3
 
 
-def test_pick_smallest_passing_bits_then_lowest_ler():
+def test_pick_smallest_passing_bits_within_osd_tolerance():
     pick = _load("p1_quant_sweep").pick
     df = pd.DataFrame([
         {"quant_bits": None, "range_x": None, "passes": True, "ler": 0.01, "osd_frac": 0.3},
@@ -47,6 +47,9 @@ def test_pick_smallest_passing_bits_then_lowest_ler():
         {"quant_bits": 4, "range_x": 2.0, "passes": True, "ler": 0.011, "osd_frac": 0.7},
         {"quant_bits": 6, "range_x": 2.0, "passes": True, "ler": 0.009, "osd_frac": 0.3},
     ])
+    # 4-bit configs pass on LER but run OSD 2x as often as float -> rejected by the OSD rule
     best = pick(df)
+    assert (best["quant_bits"], best["range_x"]) == (6, 2.0)
+    best = pick(df, osd_tol=float("inf"))  # LER-only rule
     assert (best["quant_bits"], best["range_x"]) == (4, 2.0)
     assert pick(df[df["quant_bits"].isna()]) is None
