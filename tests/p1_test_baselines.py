@@ -11,6 +11,7 @@ from qdec.workload.baselines import (
     MAX_ITERS,
     OSD_ORDER,
     bposd_decode_batch,
+    matching_decode_batch,
     measurement_info,
 )
 from qdec.workload.circuits import make_circuit, sample_shots
@@ -90,3 +91,32 @@ def test_measurement_info_is_json_and_labeled():
     assert info["label"] == "MEASURED" and info["threads"] == 1 and info["cpu"]
     assert info["max_iters"] == MAX_ITERS
     json.dumps(info)
+
+
+@pytest.fixture(scope="module")
+def matched():
+    w = dataclasses.replace(QUICK_GRID[1], shots=2_000)
+    c = make_circuit(w)
+    s = sample_shots(w)
+    return s, matching_decode_batch(c, s["dets"], s["obs"])
+
+
+def test_matching_shapes_and_latency(matched):
+    s, r = matched
+    S = s["dets"].shape[0]
+    assert set(r) == {"fail", "latency_ns"}
+    assert r["fail"].shape == (S,) and r["fail"].dtype == bool
+    assert r["latency_ns"].dtype == np.float64 and (r["latency_ns"] > 0).all()
+
+
+def test_matching_ler_reasonable(matched):
+    s, r = matched
+    assert 0 < r["fail"].mean() < 0.05 < s["obs"].mean()  # decoding beats doing nothing
+
+
+def test_matching_noiseless_never_fails():
+    w = dataclasses.replace(QUICK_GRID[0], shots=50, p=0.0)
+    s = sample_shots(w)
+    w_noisy = dataclasses.replace(w, p=1e-3)  # p=0 has no DEM edges to match on
+    r = matching_decode_batch(make_circuit(w_noisy), s["dets"], s["obs"])
+    assert not r["fail"].any()

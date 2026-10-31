@@ -6,6 +6,7 @@ import time
 from importlib.metadata import version
 
 import numpy as np
+import pymatching
 import scipy.sparse as sp
 from ldpc import BpOsdDecoder
 
@@ -127,5 +128,26 @@ def matching_decode_batch(circuit, dets: np.ndarray, obs: np.ndarray) -> dict[st
     Outputs: {"fail": bool[S], "latency_ns": float[S] (MEASURED wall clock)}.
     Contract: fail -> FUNCTIONAL_COLS.fail_matching (null for the gross code).
     Owner:   P1
+
+    Matching needs graph-like errors, so this uses decompose_errors=True (unlike the BP graph).
+    Timing matches bposd_decode_batch: one decode() per shot, one thread, after a warm-up.
     """
-    raise NotImplementedError
+    dem = circuit.detector_error_model(decompose_errors=True)
+    matching = pymatching.Matching.from_detector_error_model(dem)
+    syndromes = np.ascontiguousarray(dets, dtype=np.uint8)
+    S = syndromes.shape[0]
+    predicted = np.zeros((S, dem.num_observables), dtype=bool)
+    latency_ns = np.zeros(S, dtype=np.float64)
+
+    if S:
+        matching.decode(syndromes[0])  # warm-up, not timed
+    clock = time.perf_counter_ns
+    for i in range(S):
+        t0 = clock()
+        predicted[i] = matching.decode(syndromes[i])
+        latency_ns[i] = clock() - t0
+
+    return {
+        "fail": (predicted != np.asarray(obs, dtype=bool)).any(axis=1),
+        "latency_ns": latency_ns,
+    }
