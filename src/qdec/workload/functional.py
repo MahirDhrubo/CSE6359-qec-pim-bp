@@ -11,9 +11,11 @@ from qdec.workload.bp_minsum import MinSumBP, channel_llrs
 from qdec.workload.circuits import make_circuit
 from qdec.workload.osd import OSD
 
-# T11 decision (2026-10-31, d5 p3e-3 TRAIN sweep): smallest width that matches float LER
-# (paired McNemar p=0.30) and keeps the OSD rate within 1.15x float (42.2% vs 37.7%).
-QUANT_BITS = 5
+# T11 decision (2026-10-31, TRAIN sweeps at d5/d7 x p=1e-3/3e-3): smallest setting that
+# matches float LER (paired McNemar) AND keeps the OSD rate <= 1.15x float at every point.
+# 5 bits passed at p=3e-3 but ran OSD 1.38-1.56x as often as float at p=1e-3; 6 bits x1 was
+# 1.21x at d5 p=1e-3. 8 bits x1: OSD 1.01-1.03x float everywhere measured.
+QUANT_BITS = 8
 LLR_RANGE_X = 1.0  # llr_max = this x the largest channel LLR of the workload's graph
 
 
