@@ -127,3 +127,16 @@ def test_rejects_too_few_bits_or_missing_range():
         MinSumBP(H, priors, 10, ALPHA, quant_bits=6)  # no default range
     with pytest.raises(ValueError):
         MinSumBP(H, priors, 10, ALPHA, quant_bits=6, llr_max=0.0)
+
+
+def test_return_llrs_are_the_final_posteriors(surface):
+    g, dets = surface
+    bp = _bp(g["H"], g["priors"], MAX_ITERS, ALPHA, None)
+    corr, iters, _ = bp.decode_batch(dets)
+    c2, i2, _, llrs = bp.decode_batch(dets, return_llrs=True)
+    np.testing.assert_array_equal(corr, c2)
+    np.testing.assert_array_equal(iters, i2)
+    assert llrs.shape == corr.shape
+    np.testing.assert_array_equal((llrs < 0).astype(np.uint8), corr)  # hard decision of posterior
+    empty = ~dets.any(axis=1)
+    np.testing.assert_allclose(llrs[empty], np.broadcast_to(bp.channel, llrs[empty].shape))

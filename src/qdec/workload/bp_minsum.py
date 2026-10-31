@@ -100,11 +100,13 @@ class MinSumBP:
         corr, iters, conv = self.decode_batch(np.asarray(syndrome, dtype=bool)[None, :])
         return corr[0], int(iters[0]), bool(conv[0])
 
-    def decode_batch(self, syndromes: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def decode_batch(self, syndromes: np.ndarray, return_llrs: bool = False) -> tuple:
         """Decode many syndromes at once (same result as decode() per row).
 
         Inputs:  syndromes bool[B x n_checks].
-        Outputs: corrections uint8[B x n_vars], iters int32[B], converged bool[B].
+        Outputs: corrections uint8[B x n_vars], iters int32[B], converged bool[B]
+                 (+ posterior LLRs float64[B x n_vars] at the stopping iteration if return_llrs;
+                 these are the soft values OSD orders columns by).
         Each row stops independently as soon as its hard decision matches its syndrome; an
         empty syndrome is converged after 0 iterations.
         """
@@ -113,10 +115,11 @@ class MinSumBP:
         corr = np.zeros((B, self.n_vars), dtype=np.uint8)
         iters = np.zeros(B, dtype=np.int32)
         conv = ~syn.any(axis=1)
+        llrs = np.tile(self.channel, (B, 1)) if return_llrs else None
         active = np.flatnonzero(~conv)
         if active.size == 0 or self.max_iters == 0:
             iters[active] = self.max_iters
-            return corr, iters, conv
+            return (corr, iters, conv, llrs) if return_llrs else (corr, iters, conv)
 
         ev, ec, starts = self.edge_var, self.edge_check, self.check_start
         # check-node sign from the syndrome: a fired check wants odd parity -> flip sign
@@ -150,16 +153,20 @@ class MinSumBP:
             corr[rows] = hard[done]
             iters[rows] = it
             conv[rows] = True
+            if return_llrs:
+                llrs[rows] = post[done]
             if it == self.max_iters:
                 rest = active[~done]
                 corr[rest] = hard[~done]
                 iters[rest] = self.max_iters
+                if return_llrs:
+                    llrs[rest] = post[~done]
                 break
             keep = ~done
             if not keep.any():
                 break
             active, c2v, syn_sign = active[keep], c2v[keep], syn_sign[keep]
-        return corr, iters, conv
+        return (corr, iters, conv, llrs) if return_llrs else (corr, iters, conv)
 
     def _var_sums(self, edge_vals: np.ndarray) -> np.ndarray:
         """Sum edge values into their variables: [R x E] -> [R x n_vars]."""
