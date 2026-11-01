@@ -3,17 +3,41 @@
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from qdec.contracts import SERVICE_COLS, System  # noqa: F401
+
+REQUIRED_OPS = (
+    "sram_xor", "sram_min_search", "bitserial_add", "convergence_or_reduce",
+    "cam_search", "dram_read_byte", "dram_write_byte", "cpu_op", "osd_ns",
+)
 
 
 def load_costs(path: str | Path | None = None) -> dict:
     """Parse op_costs.yaml (default: the file next to this module).
 
     Outputs: {op_name: {"latency_ns": float, "energy_pj": float, "source": str}}.
+             Extra yaml fields (unit, status, note) are passed through.
+    Raises ValueError on a missing op, a null number or a missing / "TODO" source.
     Owner:   P2
     """
-    raise NotImplementedError
+    path = Path(path) if path else Path(__file__).with_name("op_costs.yaml")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    missing = [op for op in REQUIRED_OPS if op not in raw]
+    if missing:
+        raise ValueError(f"{path}: missing ops {missing}")
+    out = {}
+    for op, e in raw.items():
+        bad = [f for f in ("latency_ns", "energy_pj")
+               if type(e.get(f)) not in (int, float)]
+        if bad:
+            raise ValueError(f"{path}: {op}.{bad} must be numbers, got {[e.get(f) for f in bad]}")
+        src = str(e.get("source") or "").strip()
+        if not src or "TODO" in src:
+            raise ValueError(f"{path}: {op}.source needs a citation")
+        out[op] = {**e, "latency_ns": float(e["latency_ns"]),
+                   "energy_pj": float(e["energy_pj"]), "source": src}
+    return out
 
 
 def build_service_table(

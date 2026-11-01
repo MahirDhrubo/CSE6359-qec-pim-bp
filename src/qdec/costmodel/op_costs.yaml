@@ -2,48 +2,104 @@
 # Per-operation hardware costs. Every number here is MODELED, never measured.
 # Fill latency_ns / energy_pj and replace source with a citation (paper, table, page).
 # Units: latency_ns per operation; energy_pj per operation (per byte for dram_*).
+#
+# Per-op units (see `unit` on each entry):
+#   sram_* / bitserial_add: one row-wide step on a 256x256 SRAM subarray (all 256 bitlines in
+#     parallel, one bit position). An n-bit bit-serial add is n+1 steps (Neural Cache).
+#   cam_search: latency per search (all entries in parallel); energy per entry-bit compared,
+#     so search energy = entries * key_bits * energy_pj (scales with the max_entries sweep).
+#   dram_*: per byte streamed (bandwidth-limited); access latency is not included.
+#
+# status: VERIFY = proposed value; confirm the number against the cited table before the slides.
+#         CHECKED = taken directly from the cited source.
+# SRAM energies are derived from Horowitz's 45 nm SRAM read energy (8 KB array, 64-bit access
+# ~10 pJ -> ~0.16 pJ/bit -> ~40 pJ per 256-bit row step), assuming an in-place compute step
+# costs about one read, which is the Compute Caches / Neural Cache premise.
 
 sram_xor:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 1.0
+  energy_pj: 40.0
+  unit: "per 256-bit row step"
+  source: >-
+    Aga et al., "Compute Caches," HPCA 2017 (in-place bitwise ops on SRAM bitlines);
+    energy derived from Horowitz, "Computing's Energy Problem," ISSCC 2014 (8 KB SRAM read)
+  status: VERIFY
+  note: "Check the Compute Caches latency/energy table for the bitwise-op cost relative to a read."
 
 sram_min_search:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 1.0
+  energy_pj: 40.0
+  unit: "per bit step of an MSB-first min search (n-bit min = n steps)"
+  source: >-
+    Eckert et al., "Neural Cache: Bit-Serial In-Cache Acceleration of Deep Neural Networks,"
+    ISCA 2018 (bit-serial comparison, used for max-pooling); energy as for sram_xor
+  status: VERIFY
+  note: "Confirm Neural Cache's per-step cost for comparison/reduction ops."
 
 bitserial_add:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 1.0
+  energy_pj: 40.0
+  unit: "per bit step (n-bit add = n+1 steps)"
+  source: >-
+    Eckert et al., "Neural Cache," ISCA 2018 (bit-serial add takes n+1 cycles);
+    energy as for sram_xor
+  status: VERIFY
+  note: "Confirm Neural Cache's array cycle time and per-cycle energy; 1 ns is a conservative pick."
 
 convergence_or_reduce:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 2.0
+  energy_pj: 45.0
+  unit: "per check of all syndrome bits in one subarray (row step + OR tree)"
+  source: >-
+    Aga et al., "Compute Caches," HPCA 2017 (wired-OR / search-style reduction on bitlines);
+    estimate = one row step + small OR tree
+  status: VERIFY
+  note: "Estimate, not a table value. Replace with a direct number if you find one."
 
 cam_search:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 1.0
+  energy_pj: 0.001
+  unit: "latency per search; energy per entry-bit compared (1 fJ/bit/search)"
+  source: >-
+    Pagiamtzis and Sheikholeslami, "Content-Addressable Memory (CAM) Circuits and
+    Architectures: A Tutorial and Survey," IEEE JSSC 41(3), 2006
+  status: VERIFY
+  note: "Check the survey's reported energy/bit/search and search time for the design you cite."
 
 dram_read_byte:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 0.039
+  energy_pj: 244.0
+  unit: "per byte streamed"
+  source: >-
+    Energy: Horowitz, ISSCC 2014 (DRAM 1.3-2.6 nJ per 64-bit access, midpoint / 8 bytes).
+    Latency: 1 / 25.6 GB/s, one DDR4-3200 x64 channel (JEDEC JESD79-4)
+  status: CHECKED
+  note: "Horowitz is 45 nm-era DRAM; modern DDR4/HBM is lower energy. Say so on the slide."
 
 dram_write_byte:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 0.039
+  energy_pj: 244.0
+  unit: "per byte streamed"
+  source: "Same as dram_read_byte (writes modeled at read cost)"
+  status: CHECKED
+  note: "Symmetric read/write is a simplification."
 
 cpu_op:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 0.333
+  energy_pj: 70.0
+  unit: "per scalar instruction"
+  source: >-
+    Latency: 1 cycle at an assumed 3 GHz. Energy: Horowitz, ISSCC 2014 (~70 pJ per
+    instruction including fetch/decode/register-file overhead; the 32-bit add itself is 0.1 pJ)
+  status: VERIFY
+  note: "Confirm the ~70 pJ instruction-overhead figure on the Horowitz slide."
 
 osd_ns:
-  latency_ns: null
-  energy_pj: null
-  source: "TODO"
+  latency_ns: 100000.0
+  energy_pj: 1.0e+9
+  unit: "per OSD call on the CPU"
+  source: >-
+    PLACEHOLDER pending P1's measured ldpc BP+OSD time. Energy = latency * 10 W
+    (assumed single-core power)
+  status: VERIFY
+  note: "Replace latency_ns with P1's measured median OSD time at the Day 2 merge."
