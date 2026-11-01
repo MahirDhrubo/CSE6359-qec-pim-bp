@@ -18,7 +18,21 @@ def make_circuit(w: Workload) -> stim.Circuit:
     Contract: none directly; feeds sample_shots() and graphs.dem_to_graph().
     Owner:   P1
     """
-    raise NotImplementedError
+    if w.code == "surface":
+        # Uniform circuit-level depolarizing noise: every Clifford, every data qubit before each
+        # round, every reset and every measurement fail with probability w.p.
+        return stim.Circuit.generated(
+            "surface_code:rotated_memory_z",
+            distance=w.distance,
+            rounds=w.rounds,
+            after_clifford_depolarization=w.p,
+            before_round_data_depolarization=w.p,
+            after_reset_flip_probability=w.p,
+            before_measure_flip_probability=w.p,
+        )
+    if w.code == "gross":
+        raise NotImplementedError("gross [[144,12,12]] circuit not built yet (P1 Day 2/3, T14)")
+    raise ValueError(f"unknown code {w.code!r}; expected 'surface' or 'gross'")
 
 
 def sample_shots(w: Workload) -> dict[str, np.ndarray]:
@@ -29,4 +43,12 @@ def sample_shots(w: Workload) -> dict[str, np.ndarray]:
     Contract: written by scripts/p1_make_data.py via io.save_npz to SHOTS_DIR / f"{w.tag}.npz".
     Owner:   P1
     """
-    raise NotImplementedError
+    circuit = make_circuit(w)
+    sampler = circuit.compile_detector_sampler(seed=w.seed)
+    dets, obs = sampler.sample(w.shots, separate_observables=True)
+    coords = circuit.get_detector_coordinates()
+    k = max((len(v) for v in coords.values()), default=0)
+    det_coords = np.full((circuit.num_detectors, k), np.nan)
+    for i, v in coords.items():
+        det_coords[i, : len(v)] = v
+    return {"dets": dets.astype(bool), "obs": obs.astype(bool), "det_coords": det_coords}
