@@ -105,3 +105,16 @@ def test_minsum_bposd_batch_contract(surface):
 def test_osd_rejects_unknown_method():
     with pytest.raises(ValueError):
         OSD(sp.csr_matrix(np.eye(2, dtype=np.uint8)), np.full(2, 0.1), 0, "osd_e")
+
+
+@pytest.mark.parametrize("bits", [None, 6])
+def test_chunk_size_preserves_per_shot_results(surface, bits):
+    g, dets, obs = surface
+    kwargs = {"quant_bits": bits, "llr_max": 18.0 if bits else None,
+              "alpha": ALPHA, "max_iters": MAX_ITERS, "osd_order": ORDER}
+    a = minsum_bposd_batch(g["H"], g["L"], g["priors"], dets[:40], obs[:40],
+                           chunk=7, **kwargs)
+    b = minsum_bposd_batch(g["H"], g["L"], g["priors"], dets[:40], obs[:40],
+                           chunk=128, **kwargs)
+    for key in a:
+        np.testing.assert_array_equal(a[key], b[key])

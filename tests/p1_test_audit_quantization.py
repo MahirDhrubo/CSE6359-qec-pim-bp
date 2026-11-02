@@ -65,3 +65,18 @@ def test_reject_duplicate_configuration(tmp_path):
     pd.concat([df, df.iloc[[1]]]).to_csv(path, index=False)
     with pytest.raises(ValueError, match="unique configs"):
         audit_module.audit(tmp_path)
+
+
+def test_combine_preserved_runs_and_reject_conflicts(tmp_path):
+    save(tmp_path, QUICK_GRID[0])
+    first = audit_module.audit(tmp_path, bits=(8,), ranges=(1,))
+    followup = tmp_path / "followup"
+    followup.mkdir()
+    for w in QUICK_GRID[1:]:
+        save(followup, w)
+    second = audit_module.audit(followup, bits=(8,), ranges=(1,))
+    combined = audit_module.combine([first, second])
+    assert len(combined) == 4 and combined.status.eq("PASS").all()
+    save(followup, QUICK_GRID[0], osd=.4)
+    with pytest.raises(ValueError, match="conflicting"):
+        audit_module.combine([first, audit_module.audit(followup, bits=(8,), ranges=(1,))])

@@ -39,7 +39,7 @@ def _floats(s: str) -> list[float]:
     return [float(x) for x in s.split(",") if x]
 
 
-def sweep(w, bits_list, ranges, shots=None, alpha=ALPHA) -> pd.DataFrame:
+def sweep(w, bits_list, ranges, shots=None, alpha=ALPHA, chunk=128) -> pd.DataFrame:
     g = io.load_npz(GRAPHS_DIR / f"{w.code}_d{w.distance}_p{w.p:g}.npz")
     s = io.load_npz(SHOTS_DIR / f"{w.tag}.npz")
     dets, obs = s["dets"][:shots], s["obs"][:shots]
@@ -51,7 +51,7 @@ def sweep(w, bits_list, ranges, shots=None, alpha=ALPHA) -> pd.DataFrame:
     def run(bits, R):
         t0 = time.perf_counter()
         r = minsum_bposd_batch(g["H"], g["L"], g["priors"], dets, obs, quant_bits=bits,
-                               llr_max=None if bits is None else R * llr_top, **common)
+                               llr_max=None if bits is None else R * llr_top, chunk=chunk, **common)
         return r, time.perf_counter() - t0
 
     ref, dt = run(None, None)
@@ -111,6 +111,7 @@ def main(argv=None) -> pd.DataFrame:
     ap.add_argument("--bits", default="3,4,5,6,7,8")
     ap.add_argument("--ranges", default="1,1.5,2,3")
     ap.add_argument("--shots", type=int, default=None)
+    ap.add_argument("--chunk", type=int, default=128, help="shots per BP batch (memory bound)")
     ap.add_argument("--output-dir", type=Path, default=TRACES_DIR,
                     help="use a fresh directory to preserve earlier experiments")
     ap.add_argument("--osd-tol", type=float, default=OSD_TOL,
@@ -128,6 +129,8 @@ def main(argv=None) -> pd.DataFrame:
         raise FileExistsError(f"refusing to overwrite {out}; choose a new --output-dir")
     if args.shots is not None and not 0 < args.shots <= w.shots:
         ap.error("--shots must be between 1 and the workload shot count")
+    if args.chunk <= 0:
+        ap.error("--chunk must be positive")
     inputs = [SHOTS_DIR / f"{w.tag}.npz",
               GRAPHS_DIR / f"{w.code}_d{w.distance}_p{w.p:g}.npz"]
     hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
@@ -138,7 +141,7 @@ def main(argv=None) -> pd.DataFrame:
     }
     print(f"{w.tag} ({args.seed.upper()} shots), alpha={ALPHA}, max_iters={MAX_ITERS}, "
           f"{OSD_METHOD} order {OSD_ORDER}; range = R x max channel LLR", flush=True)
-    df = sweep(w, bits_list, _floats(args.ranges), args.shots)
+    df = sweep(w, bits_list, _floats(args.ranges), args.shots, chunk=args.chunk)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("x") as stream:
         df.to_csv(stream, index=False)
@@ -147,6 +150,7 @@ def main(argv=None) -> pd.DataFrame:
     provenance.update(label="FUNCTIONAL simulation; seconds are runtime, not hardware cost",
                       workload=dataclasses.asdict(w), n_shots=int(df.iloc[0]["n"]),
                       bits=bits_list, ranges=_floats(args.ranges), osd_tol=args.osd_tol,
+                      chunk=args.chunk,
                       input_sha256=hashes, output_sha256=hashlib.sha256(out.read_bytes()).hexdigest())
     provenance["source_sha256"] = source_hashes
     with meta.open("x") as stream:

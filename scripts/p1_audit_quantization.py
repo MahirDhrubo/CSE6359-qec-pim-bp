@@ -76,12 +76,31 @@ def summarize(table: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def combine(tables):
+    """Combine separately audited runs without allowing conflicting repeats to disappear."""
+    rows = []
+    for _, group in pd.concat(tables).groupby(["tag", "bits", "range_x"], sort=True):
+        known = group[group.status != "MISSING"]
+        if len(known):
+            first = known.iloc[0]
+            if (not known.status.eq(first.status).all()
+                    or not np.allclose(known.osd_ratio, first.osd_ratio)):
+                raise ValueError("conflicting repeated measurement; inspect run provenance")
+            rows.append(first)
+        else:
+            rows.append(group.iloc[0])
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--directory", type=Path, default=TRACES_DIR)
+    ap.add_argument("--additional-dir", type=Path, action="append", default=[],
+                    help="include a preserved follow-up run (repeatable)")
     ap.add_argument("--osd-tol", type=float, default=1.15)
     args = ap.parse_args(argv)
-    table = audit(args.directory, osd_tol=args.osd_tol)
+    table = combine([audit(d, osd_tol=args.osd_tol)
+                     for d in [args.directory, *args.additional_dir]])
     print("TRAIN coverage (20,000 shots/workload; legacy provenance not certified)")
     print(table.pivot(index=["bits", "range_x"], columns="tag", values="status").to_string())
     summary = summarize(table)
