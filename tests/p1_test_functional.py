@@ -90,7 +90,7 @@ def test_real_script_metadata_and_separate_destination(small, monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     monkeypatch.setattr(mod, "QUICK_GRID", [w])
-    mod.main(["--output-dir", "validation"])
+    mod.main(["--output-dir", "validation", "--d", str(w.distance), "--p", str(w.p)])
     path = Path("validation") / f"functional_{w.tag}.parquet"
     meta = json.loads(path.with_suffix(".json").read_text())
     assert meta["kind"] == "FUNCTIONAL"
@@ -98,6 +98,9 @@ def test_real_script_metadata_and_separate_destination(small, monkeypatch):
     assert 0 <= meta["float_diagnostics"]["osd_frac"] <= 1
     assert meta["output_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert meta["input_sha256"] and meta["source_sha256"]
+    assert meta["versions"]["stim"]
+    with pytest.raises(SystemExit):
+        mod.main(["--d", "5"])
 
 
 def test_reject_partial_shot_file(small, monkeypatch):

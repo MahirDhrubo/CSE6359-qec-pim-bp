@@ -9,6 +9,7 @@ import dataclasses
 import hashlib
 import json
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from qdec import io
@@ -19,12 +20,20 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
     ap.add_argument("--mock", action="store_true")
+    ap.add_argument("--d", type=int, help="optionally select one workload (requires --p)")
+    ap.add_argument("--p", type=float, help="optionally select one workload (requires --d)")
     ap.add_argument("--output-dir", type=Path, default=TRACES_DIR,
                     help="optional separate destination for a preserved validation run")
     args = ap.parse_args(argv)
 
     io.ensure_dirs()
     grid = QUICK_GRID if args.grid == "quick" else FULL_GRID
+    if (args.d is None) != (args.p is None):
+        ap.error("--d and --p must be supplied together")
+    if args.d is not None:
+        grid = [w for w in grid if w.distance == args.d and w.p == args.p]
+        if len(grid) != 1:
+            ap.error("selection must match exactly one workload")
     root = Path(__file__).resolve().parents[1]
     source_hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in [Path(__file__).resolve(),
@@ -45,6 +54,8 @@ def main(argv=None) -> None:
         metadata = {"kind": "MOCK" if args.mock else "FUNCTIONAL",
                     "workload": dataclasses.asdict(w), "input_sha256": input_hashes,
                     "source_sha256": source_hashes,
+                    "versions": {name: version(name) for name in
+                                 ("numpy", "scipy", "stim", "ldpc", "pymatching", "pandas")},
                     "output_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                     **df.attrs}
         path.with_suffix(".json").write_text(json.dumps(metadata, indent=2))
