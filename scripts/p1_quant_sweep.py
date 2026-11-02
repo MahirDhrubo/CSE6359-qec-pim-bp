@@ -12,19 +12,24 @@ Tune on TRAIN shots (default), then confirm the pick on TEST with --seed test --
 --ranges R, so the reported LER is not tuned on the shots it is measured on.
 Writes TRACES_DIR/quant_sweep_<tag>.csv.
 Usage: python scripts/p1_quant_sweep.py [--d 5] [--p 3e-3] [--seed train|test]
-           [--bits 3,4,5,6,8] [--ranges 1,1.5,2,3] [--shots N]
+           [--bits 3,4,5,6,7,8] [--ranges 1,1.5,2,3] [--shots N] [--output-dir DIR]
+
+Existing outputs are never overwritten. Use a new output directory for another run.
 """
 import argparse
 import dataclasses
+import hashlib
+import json
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from qdec import io
 from qdec.contracts import GRAPHS_DIR, QUICK_GRID, SEED_TEST, SEED_TRAIN, SHOTS_DIR, TRACES_DIR
-from qdec.workload.baselines import ALPHA, MAX_ITERS, OSD_METHOD, OSD_ORDER
+from qdec.workload.baselines import ALPHA, MAX_ITERS, OSD_METHOD, OSD_ORDER, measurement_info
 from qdec.workload.bp_minsum import channel_llrs
 from qdec.workload.functional import minsum_bposd_batch
 from qdec.workload.stats import cis_overlap, paired_worse_pvalue, wilson_ci
@@ -103,9 +108,11 @@ def main(argv=None) -> pd.DataFrame:
     ap.add_argument("--d", type=int, default=5)
     ap.add_argument("--p", type=float, default=3e-3)
     ap.add_argument("--seed", choices=("train", "test"), default="train")
-    ap.add_argument("--bits", default="3,4,5,6,8")
+    ap.add_argument("--bits", default="3,4,5,6,7,8")
     ap.add_argument("--ranges", default="1,1.5,2,3")
     ap.add_argument("--shots", type=int, default=None)
+    ap.add_argument("--output-dir", type=Path, default=TRACES_DIR,
+                    help="use a fresh directory to preserve earlier experiments")
     ap.add_argument("--osd-tol", type=float, default=OSD_TOL,
                     help="max quantized/float OSD-rate ratio for the pick")
     args = ap.parse_args(argv)
@@ -115,12 +122,35 @@ def main(argv=None) -> pd.DataFrame:
         sys.exit(f"no QUICK_GRID workload with d={args.d}, p={args.p:g}")
     w = dataclasses.replace(matches[0], seed=SEED_TRAIN if args.seed == "train" else SEED_TEST)
     bits_list = [int(b) for b in _floats(args.bits)]
+    out = args.output_dir / f"quant_sweep_{w.tag}.csv"
+    meta = out.with_suffix(".json")
+    if out.exists() or meta.exists():
+        raise FileExistsError(f"refusing to overwrite {out}; choose a new --output-dir")
+    if args.shots is not None and not 0 < args.shots <= w.shots:
+        ap.error("--shots must be between 1 and the workload shot count")
+    inputs = [SHOTS_DIR / f"{w.tag}.npz",
+              GRAPHS_DIR / f"{w.code}_d{w.distance}_p{w.p:g}.npz"]
+    hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    root = Path(__file__).resolve().parents[1]
+    source_hashes = {
+        str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in [Path(__file__).resolve(), *sorted((root / "src/qdec/workload").glob("*.py"))]
+    }
     print(f"{w.tag} ({args.seed.upper()} shots), alpha={ALPHA}, max_iters={MAX_ITERS}, "
           f"{OSD_METHOD} order {OSD_ORDER}; range = R x max channel LLR", flush=True)
     df = sweep(w, bits_list, _floats(args.ranges), args.shots)
-    out = TRACES_DIR / f"quant_sweep_{w.tag}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, index=False)
+    with out.open("x") as stream:
+        df.to_csv(stream, index=False)
+    provenance = measurement_info(alpha=ALPHA, max_iters=MAX_ITERS, osd_order=OSD_ORDER,
+                                  osd_method=OSD_METHOD)
+    provenance.update(label="FUNCTIONAL simulation; seconds are runtime, not hardware cost",
+                      workload=dataclasses.asdict(w), n_shots=int(df.iloc[0]["n"]),
+                      bits=bits_list, ranges=_floats(args.ranges), osd_tol=args.osd_tol,
+                      input_sha256=hashes, output_sha256=hashlib.sha256(out.read_bytes()).hexdigest())
+    provenance["source_sha256"] = source_hashes
+    with meta.open("x") as stream:
+        json.dump(provenance, stream, indent=2)
     best = pick(df, args.osd_tol)
     if best is None:
         print(f"no quantized config passes (LER and OSD rate <= {args.osd_tol:g}x float)")

@@ -1,6 +1,8 @@
 # OWNER: P1
 """scripts/p1_quant_sweep.py on a few real TRAIN shots, plus its pick rule."""
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -36,6 +38,21 @@ def test_sweep_rows_and_csv(ran):
     assert (df["ci_lo"] <= df["ler"]).all() and (df["ler"] <= df["ci_hi"]).all()
     on_disk = pd.read_csv(tmp / TRACES_DIR / f"quant_sweep_{df.iloc[0]['tag']}.csv")
     assert list(on_disk.columns) == list(df.columns) and len(on_disk) == 3
+    path = tmp / TRACES_DIR / f"quant_sweep_{df.iloc[0]['tag']}.csv"
+    meta = json.loads(path.with_suffix(".json").read_text())
+    assert meta["output_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert meta["workload"]["seed"] == 1000 and meta["n_shots"] == 150
+    assert meta["input_sha256"] and meta["source_sha256"]
+
+
+def test_refuses_overwrite_before_decoding(ran, monkeypatch):
+    tmp, df = ran
+    monkeypatch.chdir(tmp)
+    path = TRACES_DIR / f"quant_sweep_{df.iloc[0]['tag']}.csv"
+    original = path.read_bytes()
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        _load("p1_quant_sweep").main([])
+    assert path.read_bytes() == original
 
 
 def test_pick_smallest_passing_bits_within_osd_tolerance():
