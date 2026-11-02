@@ -34,7 +34,7 @@ def minsum_bposd_batch(
     max_iters: int,
     osd_order: int,
     osd_method: str = "osd_cs",
-    chunk: int = 2_000,
+    chunk: int = 128,
 ) -> dict[str, np.ndarray]:
     """Our min-sum BP (quantized or float) with our OSD on every non-converged shot.
 
@@ -73,11 +73,14 @@ def run_functional(w: Workload) -> pd.DataFrame:
 
     bp_iters / bp_converged / osd_ran describe the quantized decoder (the system being modeled).
     fail_bp_float uses our float BP + the same OSD, so the quantized-vs-float comparison is
-    paired and differs only in BP messages (float BP+OSD matches ldpc BpOsdDecoder; see tests).
+    paired and differs only in BP messages. Regression tests compare the float pipeline
+    with ldpc on limited samples; OSD sorting ties can differ.
     """
     s = io.load_npz(SHOTS_DIR / f"{w.tag}.npz")
     g = io.load_npz(GRAPHS_DIR / f"{w.code}_d{w.distance}_p{w.p:g}.npz")
     dets, obs = s["dets"], s["obs"]
+    if len(dets) != w.shots or len(obs) != w.shots:
+        raise ValueError(f"{w.tag}: shot file count does not match workload ({w.shots})")
     H, L, priors = g["H"], g["L"], g["priors"]
     common = {"alpha": ALPHA, "max_iters": MAX_ITERS, "osd_order": OSD_ORDER,
               "osd_method": OSD_METHOD}
@@ -103,4 +106,12 @@ def run_functional(w: Workload) -> pd.DataFrame:
         "fail_bp_float": f["fail"],
         "fail_matching": fail_matching,
     })
-    return df.astype(FUNCTIONAL_COLS)
+    df = df.astype(FUNCTIONAL_COLS)
+    # Diagnostic metadata only; no additions to the frozen functional table schema.
+    df.attrs["decoder_settings"] = {**common, "quant_bits": QUANT_BITS,
+                                    "range_x": LLR_RANGE_X, "llr_max": llr_max,
+                                    "chunk": 128}
+    df.attrs["float_diagnostics"] = {"osd_frac": float(f["osd_ran"].mean()),
+                                     "iters_mean": float(f["bp_iters"].mean()),
+                                     "iters_p99": float(np.percentile(f["bp_iters"], 99))}
+    return df

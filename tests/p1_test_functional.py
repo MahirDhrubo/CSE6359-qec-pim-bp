@@ -1,6 +1,8 @@
 # OWNER: P1
 import dataclasses
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
@@ -76,3 +78,30 @@ def test_script_mock_mode_still_works(tmp_path, monkeypatch):
     mod.main(["--grid", "quick", "--mock"])
     for w in QUICK_GRID:
         io.read_table(tmp_path / TRACES_DIR / f"functional_{w.tag}.parquet", FUNCTIONAL_COLS)
+        metadata = json.loads((TRACES_DIR / f"functional_{w.tag}.json").read_text())
+        assert metadata["kind"] == "MOCK" and metadata["input_sha256"] == {}
+
+
+def test_real_script_metadata_and_separate_destination(small, monkeypatch):
+    tmp, w, _, _ = small
+    monkeypatch.chdir(tmp)
+    spec = importlib.util.spec_from_file_location(
+        "p1_run_functional", ROOT / "scripts" / "p1_run_functional.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "QUICK_GRID", [w])
+    mod.main(["--output-dir", "validation"])
+    path = Path("validation") / f"functional_{w.tag}.parquet"
+    meta = json.loads(path.with_suffix(".json").read_text())
+    assert meta["kind"] == "FUNCTIONAL"
+    assert meta["decoder_settings"]["quant_bits"] == QUANT_BITS
+    assert 0 <= meta["float_diagnostics"]["osd_frac"] <= 1
+    assert meta["output_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert meta["input_sha256"] and meta["source_sha256"]
+
+
+def test_reject_partial_shot_file(small, monkeypatch):
+    tmp, w, _, _ = small
+    monkeypatch.chdir(tmp)
+    with pytest.raises(ValueError, match="shot file count"):
+        run_functional(dataclasses.replace(w, shots=w.shots + 1))
