@@ -58,11 +58,46 @@ def simulate(service_ns: np.ndarray, round_period_ns: float, controller=None) ->
     return SimResult(latency_ns=latency, t_ns=arrival, queue_depth=depth, stable=stable)
 
 
-def max_sustainable_rate(service_ns: np.ndarray, controller=None, tol: float = 0.01) -> float:
-    """Highest round rate (rounds per second) at which simulate() stays backlog-stable.
+def max_sustainable_rate(
+    service_ns: np.ndarray,
+    controller=None,
+    tol: float = 0.01,
+    latency_budget_ns: float | None = None,
+    quantile: float = 0.999,
+    **sim_kwargs,
+) -> float:
+    """Highest round rate (rounds per second) at which the decoder keeps up.
 
-    Inputs:  as simulate(); tol = relative tolerance of the search over round_period_ns.
-    Outputs: rate in Hz.
+    "Keeps up" is simulate(...).stable (utilization <= 1). If latency_budget_ns is given it must
+    ALSO hold that the `quantile` of per-window latency (queueing + service) is <= the budget;
+    that is the tail-aware definition, since a stable queue can still have huge p99.9 latency.
+    Both criteria are monotone in the round period, so the period is found by geometric
+    bisection to within relative `tol`, and the rate is reported from the side that passes.
+
+    Inputs:  as simulate() (controller and **sim_kwargs are passed through).
+    Outputs: rate in Hz; 0.0 if no round period meets the latency budget.
     Owner:   P3
     """
-    raise NotImplementedError
+    s = np.asarray(service_ns, dtype=np.float64)
+    if not np.any(s > 0):
+        raise ValueError("service_ns must contain a positive service time")
+
+    def ok(period: float) -> bool:
+        r = simulate(s, period, controller, **sim_kwargs)
+        if not r.stable:
+            return False
+        return latency_budget_ns is None or np.quantile(r.latency_ns, quantile) <= latency_budget_ns
+
+    # At period >= max service nothing ever queues, so latency == service exactly and no longer
+    # period can do better: feasibility is decided there, and the search only goes downward.
+    # (Searching upward instead loses all latency precision once arrival times reach ~1e20 ns.)
+    hi = float(s.max())
+    if not ok(hi):
+        return 0.0
+    lo = hi / 2
+    while ok(lo):
+        hi, lo = lo, lo / 2
+    while hi / lo > 1 + tol:
+        mid = np.sqrt(hi * lo)
+        hi, lo = (mid, lo) if ok(mid) else (hi, mid)
+    return 1e9 / hi

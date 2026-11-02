@@ -163,10 +163,62 @@ def plot_backlog_over_time(sim_results: dict, out: Path) -> Path:
     raise NotImplementedError
 
 
-def plot_max_rate(rates: pd.DataFrame, out: Path) -> Path:
-    """Max sustainable round rate per System and workload (from queue.sim.max_sustainable_rate).
-    Owner: P3."""
-    raise NotImplementedError
+def plot_max_rate(
+    rates: pd.DataFrame,
+    out: Path,
+    target_hz: float | None = 1e6,
+    note: str = "",
+    title: str = "Max sustainable syndrome-round rate",
+) -> Path:
+    """Max sustainable round rate per System, one panel per workload tag.
+
+    Inputs:  rates with columns tag, system, rate_hz (from queue.sim.max_sustainable_rate);
+             target_hz = reference line (default 1 MHz = 1 us rounds, superconducting-qubit
+             scale; None to omit); note = subtitle text (state the criterion and MODELED/MOCK).
+    Outputs: PNG at `out`. Bars on a log x-axis, each labelled with its rate.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(rates["tag"]))
+    ncols = 1 if len(tags) == 1 else 2
+    nrows = -(-len(tags) // ncols)
+    systems = list(dict.fromkeys(rates["system"]))
+    colors = _colors(systems)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 0.32 * len(systems) * nrows + 1.2),
+                             sharex=True, squeeze=False)
+    lo = min(rates.loc[rates["rate_hz"] > 0, "rate_hz"].min(), target_hz or np.inf)
+    hi = max(rates["rate_hz"].max(), target_hz or 0)
+    for ax, tag in zip(axes.flat, tags):
+        _style(ax)
+        ax.grid(axis="y", visible=False)
+        ax.grid(axis="x", color=GRID, linewidth=0.6)
+        d = rates[rates["tag"] == tag].set_index("system").reindex(systems)
+        y = np.arange(len(systems))[::-1]
+        feasible = d["rate_hz"] > 0
+        ax.barh(y[feasible], d["rate_hz"][feasible], height=0.62,
+                color=[colors[s] for s, f in zip(systems, feasible) if f])
+        for yi, v in zip(y, d["rate_hz"]):
+            if not v > 0:
+                text = "never meets the latency budget"
+            else:
+                text = f"{v / 1e6:.2f} MHz" if v >= 1e6 else f"{v / 1e3:.0f} kHz"
+            ax.annotate(text, (v if v > 0 else lo / 2, yi), xytext=(3, 0),
+                        textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
+        ax.set_yticks(y, systems)
+        ax.set_ylim(-0.7, len(systems) - 0.2)
+        ax.set_xscale("log")
+        ax.set_xlim(lo / 2, hi * 4)
+        if target_hz:
+            ax.axvline(target_hz, color=INK_2, linewidth=0.9, linestyle=(0, (4, 3)))
+        ax.set_title(tag, loc="left", fontsize=9, color=INK_2)
+    for ax in axes.flat[len(tags):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("round rate (Hz, log scale)")
+    sub = (f"dashed line: {target_hz / 1e6:g} MHz target" if target_hz else "") + (
+        f"  |  {note}" if note else "")
+    fig.suptitle(f"{title}\n{sub}", x=0.02, ha="left", fontsize=11, color=INK)
+    fig.tight_layout()
+    return _save(fig, out)
 
 
 def plot_hit_rate(cache_dfs: dict[str, pd.DataFrame], out: Path) -> Path:

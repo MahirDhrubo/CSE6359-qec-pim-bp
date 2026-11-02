@@ -37,3 +37,15 @@ def test_latency_cdf_rejects_mixed_tags(tmp_path):
     df = pd.concat([mock_service(w.tag, n=100) for w in QUICK_GRID[:2]])
     with pytest.raises(ValueError, match="one tag"):
         plot_latency_cdf(df, tmp_path / "cdf.png")
+
+
+def test_max_rate_plot(tmp_path):
+    import pandas as pd
+
+    from qdec.contracts import System
+    from qdec.results.plots import plot_max_rate
+    rates = pd.DataFrame([{"tag": w.tag, "system": s.value, "rate_hz": 1e6 * (i + 1) / 3}
+                          for w in QUICK_GRID for i, s in enumerate(System)])
+    rates.loc[0, "rate_hz"] = 0.0                       # infeasible budget must still draw
+    out = plot_max_rate(rates, tmp_path / "rate.png")
+    assert out.exists() and out.stat().st_size > 10_000
