@@ -64,7 +64,7 @@ def test_bad_inputs_rejected():
         simulate(np.array([]), T)
     with pytest.raises(ValueError):
         simulate(np.ones(5), 0.0)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="rows"):
         simulate(np.ones(5), T, controller=object())
 
 
