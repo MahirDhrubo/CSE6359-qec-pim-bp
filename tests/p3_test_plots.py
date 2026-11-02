@@ -21,3 +21,19 @@ def test_system_colors_are_fixed_and_others_do_not_collide():
     c = _colors(["pim_cache", "light", "heavy"])
     assert c["pim_cache"] == SYSTEM_COLOR["pim_cache"]
     assert len(set(c.values())) == 3
+
+
+def test_latency_cdf_on_mock_service(tmp_path):
+    from qdec.results.plots import plot_latency_cdf
+    out = plot_latency_cdf(mock_service(QUICK_GRID[0].tag, n=2000), tmp_path / "cdf.png")
+    assert out.exists() and out.stat().st_size > 10_000
+
+
+def test_latency_cdf_rejects_mixed_tags(tmp_path):
+    import pandas as pd
+    import pytest
+
+    from qdec.results.plots import plot_latency_cdf
+    df = pd.concat([mock_service(w.tag, n=100) for w in QUICK_GRID[:2]])
+    with pytest.raises(ValueError, match="one tag"):
+        plot_latency_cdf(df, tmp_path / "cdf.png")
