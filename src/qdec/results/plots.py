@@ -202,7 +202,8 @@ def plot_max_rate(
             else:
                 text = f"{v / 1e6:.2f} MHz" if v >= 1e6 else f"{v / 1e3:.0f} kHz"
             ax.annotate(text, (v if v > 0 else lo / 2, yi), xytext=(3, 0),
-                        textcoords="offset points", va="center", fontsize=7.5, color=INK_2)
+                        textcoords="offset points", va="center", fontsize=7.5, color=INK_2,
+                        bbox={"fc": SURFACE, "ec": "none", "pad": 0.6})
         ax.set_yticks(y, systems)
         ax.set_ylim(-0.7, len(systems) - 0.2)
         ax.set_xscale("log")

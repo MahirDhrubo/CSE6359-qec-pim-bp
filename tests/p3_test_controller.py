@@ -115,3 +115,42 @@ def test_uncapped_mismatch():
     base = BacklogController(50).reprice_all(rows, 50, COSTS)
     assert uncapped_mismatch(base, rows, COSTS, 50) == pytest.approx(0.0)
     assert uncapped_mismatch(base * 2, rows, COSTS, 50) == pytest.approx(0.5)
+
+
+def test_best_budget_stays_high_when_osd_dominates():
+    """OSD = 100 iterations: only the never-converging shots are worth capping, so b* stays
+    well above a naive floor and beats both no capping and the naive max_iters // 5 floor."""
+    from qdec.queue.controller import best_budget
+    _, rows = rows_for(QUICK_GRID[0].tag)
+    b = best_budget(rows, COSTS, 50)
+    c = BacklogController(50)
+    mean = {k: c.reprice_all(rows, k, COSTS).mean() for k in (b, 50, 10)}
+    assert b > 20
+    assert mean[b] <= mean[50] < mean[10]
+
+
+def test_best_budget_is_max_iters_when_capping_never_pays():
+    from qdec.queue.controller import best_budget
+    rows = pd.DataFrame({"path": "bp", "bp_iters": [5, 8, 12], "osd_ran": False})
+    assert best_budget(rows, COSTS, 50) == 50       # nothing to save, any cap adds OSD
+
+
+def test_best_budget_caps_when_iterations_dominate():
+    from qdec.queue.controller import best_budget
+    rows = overload_rows()
+    costs = {"per_iter_ns": 50.0, "osd_ns": 400.0, "cache_ns": 10.0}
+    b = best_budget(rows, costs, 200)
+    assert 1 <= b < 200
+    c = BacklogController(200)
+    assert c.reprice_all(rows, b, costs).mean() < c.reprice_all(rows, 200, costs).mean()
+
+
+def test_cost_aware_floor_never_hurts_max_rate():
+    """With min_iters = best_budget, the controller can't lose to controller-off."""
+    from qdec.queue.controller import best_budget
+    _, rows = rows_for(QUICK_GRID[0].tag)
+    c = BacklogController(50, min_iters=best_budget(rows, COSTS, 50))
+    base = c.reprice_all(rows, 50, COSTS)
+    on = max_sustainable_rate(base, c, latency_budget_ns=10_000, rows=rows, iter_costs=COSTS)
+    off = max_sustainable_rate(base, latency_budget_ns=10_000)
+    assert on >= off * 0.99

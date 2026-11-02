@@ -63,6 +63,20 @@ class BacklogController:
         return np.where(rows["path"].to_numpy() == "cache", float(iter_costs["cache_ns"]), bp)
 
 
+def best_budget(rows: pd.DataFrame, iter_costs: dict, max_iters: int) -> int:
+    """Budget b* in [1, max_iters] that minimizes MEAN service over these shots.
+
+    Use as the controller's min_iters: a backlog drains at the mean service rate, so capping
+    below b* only adds OSD calls and slows draining. b* == max_iters means capping never pays
+    (e.g. osd_ns large vs per_iter_ns), and the controller then never caps. Ties go to the
+    larger budget (fewer OSD calls, closer to uncapped decoding).
+    Calibrated on the bp_iters distribution, like choosing max_iters itself.
+    """
+    c = BacklogController(max_iters)
+    means = {b: c.reprice_all(rows, b, iter_costs).mean() for b in range(max_iters, 0, -1)}
+    return min(means, key=means.get)          # dict order: max_iters first, so ties keep larger b
+
+
 def uncapped_mismatch(service_ns: np.ndarray, rows: pd.DataFrame, iter_costs: dict,
                       max_iters: int) -> float:
     """Median relative gap between P2's service latency and reprice() at the full budget.
