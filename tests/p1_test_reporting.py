@@ -1,10 +1,15 @@
 # OWNER: P1
+import hashlib
+import importlib.util
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from qdec.contracts import QUICK_GRID
+from qdec import io
+from qdec.contracts import FUNCTIONAL_COLS, QUICK_GRID
 from qdec.mocks import mock_functional
 from qdec.workload.reporting import summarize_functional
 
@@ -45,3 +50,27 @@ def test_rejects_partial_trace():
     w, df, shots = fixture_data()
     with pytest.raises(ValueError, match="complete TEST"):
         summarize_functional(w, df.iloc[:2], shots, 8)
+
+
+def test_report_verifies_sidecar_before_publishing(tmp_path, monkeypatch, capsys):
+    spec = importlib.util.spec_from_file_location(
+        "p1_report_day2", Path(__file__).resolve().parents[1] / "scripts/p1_report_day2.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    w, df, shots = fixture_data()
+    monkeypatch.setattr(mod, "QUICK_GRID", [w])
+    monkeypatch.setattr(mod, "QUANT_BITS", 8)
+    monkeypatch.setattr(mod, "SHOTS_DIR", tmp_path)
+    shot_path = io.save_npz(tmp_path / f"{w.tag}.npz", **shots)
+    trace = io.write_table(df, FUNCTIONAL_COLS, tmp_path / f"functional_{w.tag}.parquet")
+    meta = {"kind": "FUNCTIONAL", "output_sha256": hashlib.sha256(trace.read_bytes()).hexdigest(),
+            "input_sha256": {str(shot_path): hashlib.sha256(shot_path.read_bytes()).hexdigest()},
+            "decoder_settings": {"quant_bits": 8, "range_x": mod.LLR_RANGE_X}}
+    sidecar = trace.with_suffix(".json")
+    sidecar.write_text(json.dumps(meta))
+    assert len(mod.main(["--directory", str(tmp_path)])) == 1
+    assert "TEST comparison" in capsys.readouterr().out
+    meta["output_sha256"] = "stale"
+    sidecar.write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="provenance"):
+        mod.main(["--directory", str(tmp_path)])

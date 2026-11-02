@@ -60,6 +60,8 @@ VECLIB_MAXIMUM_THREADS=1 .venv/bin/python scripts/p1_benchmark_osd.py --d 5 --p 
 
 It uses the selected constants in `functional.py`. This small TEST prefix is a
 timing diagnostic, not full-grid LER validation or a representative tail study.
+Run timing studies on an otherwise idle machine and verify the CPU model is
+resolved (sandboxed system queries may report only the architecture).
 The helper returns per-call shot IDs and durations in memory; its CLI prints
 summary percentiles only. A persistent per-shot handoff format remains to be
 agreed if P2 adopts this proposal.

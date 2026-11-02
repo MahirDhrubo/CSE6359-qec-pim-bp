@@ -4,23 +4,41 @@
 Usage: .venv/bin/python scripts/p1_report_day2.py
 Input hashes identify inspected artifacts, not their original creation provenance.
 """
+import argparse
 import hashlib
+import json
+from pathlib import Path
 
 from qdec import io
 from qdec.contracts import FUNCTIONAL_COLS, QUICK_GRID, SHOTS_DIR, TRACES_DIR
-from qdec.workload.functional import QUANT_BITS
+from qdec.workload.functional import LLR_RANGE_X, QUANT_BITS
 from qdec.workload.reporting import summarize_functional
 
 
-def main():
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--directory", type=Path, default=TRACES_DIR)
+    args = ap.parse_args(argv)
     summaries, hashes = [], []
     for w in QUICK_GRID:
-        trace = TRACES_DIR / f"functional_{w.tag}.parquet"
+        trace = args.directory / f"functional_{w.tag}.parquet"
         shots = SHOTS_DIR / f"{w.tag}.npz"
+        sidecar = trace.with_suffix(".json")
+        if sidecar.exists():
+            metadata = json.loads(sidecar.read_text())
+            if (metadata["kind"] != "FUNCTIONAL"
+                    or metadata["output_sha256"] != hashlib.sha256(trace.read_bytes()).hexdigest()
+                    or metadata["input_sha256"][str(shots)]
+                    != hashlib.sha256(shots.read_bytes()).hexdigest()
+                    or metadata["decoder_settings"]["quant_bits"] != QUANT_BITS
+                    or metadata["decoder_settings"]["range_x"] != LLR_RANGE_X):
+                raise ValueError(f"{sidecar}: provenance does not match selected run")
         summaries.append(summarize_functional(
             w, io.read_table(trace, FUNCTIONAL_COLS), io.load_npz(shots), QUANT_BITS))
         hashes.extend((str(p), hashlib.sha256(p.read_bytes()).hexdigest()) for p in (trace, shots))
     print("# P1 Day 2 TEST comparison\n")
+    print(f"Selected configuration: {QUANT_BITS}-bit messages, range x{LLR_RANGE_X:g}. "
+          "For legacy traces without metadata, range provenance is not certified.\n")
     print("Float = our min-sum BP + our OSD; CPU timing baseline = ldpc BP+OSD.\n")
     print("PASS means no significant degradation detected, not proven equivalence. "
           "All intervals are 95% Wilson; p-values are one-sided paired McNemar. "
