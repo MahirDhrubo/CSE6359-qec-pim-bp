@@ -1,128 +1,79 @@
-# P1 Day 2 continuation — updated 2026-11-02
+# P1 Day 2 status — 2026-11-02
 
-## Live TEST checkpoint after f620920
+P1 implementation and local QUICK_GRID validation are complete. Team adoption
+and merging are not verified; see the remaining delivery items below.
 
-The frozen production settings are 6 bits / x1.5. Fresh TEST runs write to
-`data/traces/day2_test_6b/`; the canonical `data/traces/functional_*` files still
-hold the preserved 8-bit runs until all four new workloads validate.
+## Recovery from the interrupted iteration
 
-- d5/p=.001 completed: quantized/float failures 4/4, paired p=1, OSD .12905/.1168.
-- d5/p=.003 completed: quantized/float failures 36/37, paired p=.70947265625,
-  OSD .4275/.3825.
-- d7/p=.001 and d7/p=.003 jobs launched; completion remains to be checked.
+The working tree was clean. Six commits through `420e67f` had completed sweep
+preservation/provenance, combined TRAIN audits, functional input validation and
+metadata, TEST reporting, and the explicitly unapproved OSD timing proposal.
+The two d7 TRAIN jobs also finished successfully after the last progress message.
+Their input/output hashes were verified; no completed work needed to be redone.
 
-On resumption, inspect the separate directory and verify its sidecars before
-rerunning anything. The commands below were launched once for each of the four
-QUICK_GRID `(d,p)` pairs; rerun only missing/invalid workloads after checking
-that no previous process is still active:
+Day 1 remains merged in origin/main at `819cdd8`. The original four Day 2 patches
+survived the rebase unchanged. All new changes remain within P1-owned paths.
 
-```sh
-VECLIB_MAXIMUM_THREADS=1 .venv/bin/python scripts/p1_run_functional.py --d 7 --p .003 --output-dir data/traces/day2_test_6b
-.venv/bin/python scripts/p1_report_day2.py --directory data/traces/day2_test_6b
-```
+## Iteration outcomes
 
-The full report requires all four outputs and verifies sidecar hashes/settings.
-The last full suite at this checkpoint passed 162 tests with 1 expected failure.
+1. **Evidence audit complete:** smaller widths and missing range measurements
+   were distinguished from passing evidence; saved runs are never overwritten
+   by the sweep tool, and follow-up runs can be audited together.
+2. **Selection and TEST validation complete:** 6-bit x1.5 was frozen from TRAIN
+   in `f620920`, then all four TEST workloads were freshly decoded. It is the
+   smallest passing width within the declared 3–8-bit, x1/x1.5/x2/x3 domain.
+   See [QUANTIZATION_DECISION.md](QUANTIZATION_DECISION.md) for the rule and TRAIN
+   evidence, including the near-threshold d5 TRAIN result and provenance limits.
+3. **P1 handoff prepared:** the committed [TEST report](DAY2_RESULTS.md) contains
+   counts, confidence intervals, paired comparisons, OSD ratios, iteration tails
+   and artifact hashes. [DAY2_HANDOFF.md](DAY2_HANDOFF.md) gives reproduction
+   commands, field meanings, hardware assumptions and the OSD timing proposal.
 
-## Recovery checkpoint: iteration 2
+## Final TEST results: 20,000 shots per workload
 
-The previous session completed six commits through 420e67f. The worktree was
-clean on recovery; no code needed to be redone. The last full suite reported
-162 passed and 1 xfailed. Sweep preservation/provenance, multi-directory audit,
-functional validation/provenance, TEST reporting and the proposed OSD-only
-benchmark are implemented. The timing proposal is explicitly not team-approved.
-
-Both long-running d7 TRAIN jobs finished successfully. Input and CSV hashes in
-their sidecars were verified against disk on 2026-11-02. Results:
-
-| TRAIN workload | 6-bit x1.5 failures | Float failures | Paired p | Quantized / float OSD |
+| Workload | Quantized failures | Float failures | Paired p | Quantized / float OSD rate |
 |---|---:|---:|---:|---:|
-| d7, p=.001 | 1 | 1 | 1.0 | .26315 / .2429 |
-| d7, p=.003 | 19 | 18 | .5 | .725 / .68015 |
+| d5, p=.001 | 4 | 4 | 1 | 1.1049 |
+| d5, p=.003 | 36 | 37 | .709473 | 1.1176 |
+| d7, p=.001 | 0 | 0 | 1 | 1.0842 |
+| d7, p=.003 | 12 | 12 | .623047 | 1.0623 |
 
-Together with saved d5 TRAIN measurements, 6-bit x1.5 passes all four workloads.
-It is the smallest passing width in the declared 3–8-bit, x1/x1.5/x2/x3 domain.
-7-bit testing is unnecessary to establish that bounded minimum. Settings were
-frozen from TRAIN on recovery, before starting new TEST generation. Existing
-8-bit TEST traces remain intact until the new traces are validated.
+Every workload passes the LER screening rule and the <=1.15x OSD-frequency
+criterion. This means no significant degradation detected, not proven equality
+or noninferiority. Earlier TEST results had already been inspected; do not
+present the project as a fully blinded study. Settings were not retuned using
+these new TEST results.
 
-Reproduce the selection audit:
+The regenerated float and matching failure arrays exactly reproduce the prior
+references on every shot. All new input, source and output hashes, schema/row
+alignment, bit width and BP/OSD bookkeeping were checked before installation.
 
-```sh
-.venv/bin/python scripts/p1_audit_quantization.py --additional-dir data/traces/day2_train_6b
-```
+## Artifact locations and checks
 
-Remaining: generate and validate 6-bit TEST traces, publish the comparison and
-settings in this P1-owned directory, and prepare the real-artifact handoff.
-P2 adoption, team communication and merging have not occurred.
+- Canonical `data/traces/functional_<tag>.parquet` files now contain the four
+  validated 6-bit TEST traces (80,000 rows total), with adjacent JSON metadata.
+- `data/traces/day2_test_6b/` preserves the new validation runs.
+- `data/traces/day2_previous_8b/` preserves all four original 8-bit traces.
+- `data/traces/day2_train_6b/` holds the new d7 TRAIN evidence. Older d5 TRAIN
+  sweeps remain in `data/traces/`; shots, graphs and ldpc baseline latencies
+  were not changed.
+- Last full check: `make test PYTHON=.venv/bin/python` — 162 passed, 1 xfailed.
+  Scoped lint passes for all P1 source, scripts and tests.
 
-The sections below preserve the initial audit and plan as historical context;
-the recovery checkpoint above supersedes their pending-measurement statements.
+All data directories remain git-ignored. Teammates must regenerate or explicitly
+transfer artifacts; committing code does not transmit them.
 
-## Preserved starting point
+## Remaining team delivery decisions
 
-Day 1 is merged into origin/main (819cdd8). The four rebased Day 2 patches through
-804b433 are identical to their pre-rebase versions. Retain MinSumBP, custom OSD,
-the sweep tooling and functional pipeline. Shared schemas stay unchanged.
-All QUICK_GRID shot/graph files, four 20,000-shot 8-bit TEST functional traces,
-and four measured ldpc CPU latency datasets exist locally. Data is git-ignored;
-these artifacts are not delivered by merging code.
+- Share the report and deliver/merge the branch. No push, merge or teammate
+  message was performed in this iteration.
+- P2 must confirm consumption of real functional traces; P3 must confirm real
+  service-table integration. Their implementations are outside P1 ownership.
+- OSD-only cost is a **proposal**, not a team-approved measurement choice.
+  The user confirmed that no agreement exists. Whole ldpc BP+OSD latency must
+  not be substituted for OSD-only cost. P2 owns adoption and the cost-model YAML.
+- Controller repricing does not establish reduced-budget LER. Stored-message
+  bit width does not define accumulator width. Both limitations are documented
+  for downstream interpretation; no shared contract was changed.
 
-## Iteration 1: audit existing TRAIN evidence
-
-Run `.venv/bin/python scripts/p1_audit_quantization.py` from the repository root.
-The command reads saved CSVs and prints coverage; it never modifies artifacts.
-It requires full 20,000-shot TRAIN records, unique configurations and one float
-reference per workload. PASS requires overlapping 95% Wilson intervals, paired
-one-sided p >= .05 and quantized OSD frequency <= 1.15 times float.
-This is a screening rule, not an equivalence/noninferiority proof.
-
-Saved evidence for a single bits/range configuration across the whole grid:
-
-- 8-bit x1 passes all four workloads. Keep it as the provisional production setting.
-- All 3-, 4-, 5-bit candidates at x1/x1.5/x2/x3 fail at least one workload.
-- 6-bit x1, x2 and x3 fail at least one workload.
-- 6-bit x1.5 passes both d5 workloads; both d7 TRAIN measurements are missing.
-- 7-bit x1/x1.5/x2/x3 are entirely unmeasured.
-
-These conclusions cover only the specified candidate domain (3–8 bits and the
-four ranges), not all possible quantizers. Legacy CSVs lack input hashes and
-decoder settings metadata, so coverage is not certified run provenance.
-
-## Iteration 2: complete selection and TEST reporting
-
-1. Preserve existing sweeps when adding measurements: the current sweep CLI
-   overwrites the workload CSV. Add a separate run destination/provenance before
-   new experiments, rather than losing existing evidence.
-2. Measure 6-bit x1.5 on d7 TRAIN at p=.001 and .003 (20,000 shots each).
-   If it passes both, it is the smallest passing width in the specified domain.
-   If it fails, screen 7-bit ranges on TRAIN, rejecting a fixed configuration
-   once any workload fails; require all four workloads before accepting one.
-3. Freeze the chosen settings, then evaluate TEST once for reporting. Do not
-   use TEST to choose widths/ranges. Existing TEST results have already been
-   inspected; disclose this history rather than claiming a fully blinded study.
-4. Produce a reproducible TEST comparison report: failures, LER, Wilson CIs,
-   paired discordances/p-value, OSD frequency and iteration tails, with settings
-   and provenance. Existing 8-bit functional traces remain reusable if unchanged.
-   Their schema contains quantized iteration/OSD fields only, so float fallback
-   statistics require separate evidence; do not invent them from these traces.
-
-## Iteration 3: P2 handoff and delivery
-
-- The float functional reference is our float BP + our custom OSD. The measured
-  bposd_cpu reference is ldpc. Current regression tests do not prove universal
-  equivalence of these implementations; custom OSD differs on sorting ties.
-- P2's osd_ns placeholder asks for OSD-only timing. Existing bposd_latency files
-  measure the complete ldpc decode; do not substitute them as OSD-only costs.
-  Agree the implementation and timing definition with P2 before introducing a
-  new cross-owner artifact. Shared contract changes require user approval.
-- Stored messages are quantized, but variable sums/posteriors accumulate without
-  saturation in float64. P2 needs a hardware accumulator-width assumption.
-- Controller repricing models earlier fallback latency; it does not validate
-  LER for decoding at a reduced iteration budget.
-- Run make test with PYTHON=.venv/bin/python before every small commit. Share
-  commands/settings/comparison results and coordinate real-data ingestion.
-  P2 cache/service construction and P3 controller remain stubs in this checkout.
-  No claim that teammates switched off mocks or that the branch is merged.
-
-Gross-code construction and FULL_GRID sweeps remain Day 3 work.
+Gross-code implementation and FULL_GRID sweeps remain Day 3 work.

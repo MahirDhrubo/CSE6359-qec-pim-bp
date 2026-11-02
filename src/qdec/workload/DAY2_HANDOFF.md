@@ -1,5 +1,13 @@
 # P1 Day 2 handoff
 
+Local validation completed 2026-11-02: **6-bit messages, range x1.5**, alpha=.625,
+50 maximum BP iterations, OSD-CS order 7. All four 20,000-shot QUICK_GRID TEST
+workloads pass the LER screening rule and <=1.15x float OSD-frequency criterion.
+See [DAY2_RESULTS.md](DAY2_RESULTS.md) for the comparison and
+[QUANTIZATION_DECISION.md](QUANTIZATION_DECISION.md) for the TRAIN selection.
+The canonical functional files now contain this configuration; the prior 8-bit
+traces are preserved in `data/traces/day2_previous_8b/`.
+
 ## Reproduce the inputs and functional traces
 
 From the repository root, with the existing `.venv`:

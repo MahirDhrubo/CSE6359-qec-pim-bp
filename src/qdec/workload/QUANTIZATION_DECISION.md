@@ -55,5 +55,5 @@ directory. The script refuses to overwrite a saved experiment.
 
 Saved TEST results were inspected in earlier iterations. This project is not
 a fully blinded study. The new 6-bit configuration was frozen from TRAIN before
-its TEST traces were generated. The pending TEST comparison is a validation of
-that choice, not another configuration search.
+its TEST traces were generated. The completed [TEST comparison](DAY2_RESULTS.md)
+validates that choice at all four workloads; settings were not retuned on TEST.
