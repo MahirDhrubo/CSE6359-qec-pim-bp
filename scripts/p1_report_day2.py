@@ -24,6 +24,7 @@ def main(argv=None):
         trace = args.directory / f"functional_{w.tag}.parquet"
         shots = SHOTS_DIR / f"{w.tag}.npz"
         sidecar = trace.with_suffix(".json")
+        metadata = {}
         if sidecar.exists():
             metadata = json.loads(sidecar.read_text())
             if (metadata["kind"] != "FUNCTIONAL"
@@ -35,6 +36,7 @@ def main(argv=None):
                 raise ValueError(f"{sidecar}: provenance does not match selected run")
         summaries.append(summarize_functional(
             w, io.read_table(trace, FUNCTIONAL_COLS), io.load_npz(shots), QUANT_BITS))
+        summaries[-1]["float_osd_frac"] = metadata.get("float_diagnostics", {}).get("osd_frac")
         hashes.extend((str(p), hashlib.sha256(p.read_bytes()).hexdigest()) for p in (trace, shots))
     print("# P1 Day 2 TEST comparison\n")
     print(f"Selected configuration: {QUANT_BITS}-bit messages, range x{LLR_RANGE_X:g}. "
@@ -55,12 +57,18 @@ def main(argv=None):
               f"{cell('float')} | {r['matching_fails']} | "
               f"{r['only_q_fails']} / {r['only_float_fails']} | {r['p_worse']:.6g} | "
               f"{'PASS' if r['ler_screen_pass'] else 'FAIL'} |")
-    print("\n| Workload | Quantized OSD rate | Mean iterations | p99 | p99.9 |")
-    print("|---|---:|---:|---:|---:|")
+    print("\n| Workload | Quantized OSD rate | Float OSD rate | OSD ratio | "
+          "Quantized mean iterations | p99 | p99.9 |")
+    print("|---|---:|---:|---:|---:|---:|---:|")
     for r in summaries:
-        print(f"| {r['tag']} | {r['quant_osd_frac']:.3%} | {r['iters_mean']:.4f} | "
+        f = r["float_osd_frac"]
+        f_text = "unavailable" if f is None else f"{f:.3%}"
+        ratio = f"{r['quant_osd_frac'] / f:.4f}" if f else "n/a"
+        print(f"| {r['tag']} | {r['quant_osd_frac']:.3%} | {f_text} | {ratio} | "
+              f"{r['iters_mean']:.4f} | "
               f"{r['iters_p99']:g} | {r['iters_p999']:g} |")
-    print("\nFloat OSD rates are not in FUNCTIONAL_COLS and cannot be inferred from these files.")
+    print("\nFloat OSD rates come only from verified generation sidecars; "
+          "legacy traces without those diagnostics report unavailable.")
     print("\nInspected artifact SHA-256 (does not certify original generation settings):\n")
     for path, digest in hashes:
         print(f"- `{path}`: `{digest}`")

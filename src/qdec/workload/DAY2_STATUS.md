@@ -1,5 +1,29 @@
 # P1 Day 2 continuation — updated 2026-11-02
 
+## Live TEST checkpoint after f620920
+
+The frozen production settings are 6 bits / x1.5. Fresh TEST runs write to
+`data/traces/day2_test_6b/`; the canonical `data/traces/functional_*` files still
+hold the preserved 8-bit runs until all four new workloads validate.
+
+- d5/p=.001 completed: quantized/float failures 4/4, paired p=1, OSD .12905/.1168.
+- d5/p=.003 completed: quantized/float failures 36/37, paired p=.70947265625,
+  OSD .4275/.3825.
+- d7/p=.001 and d7/p=.003 jobs launched; completion remains to be checked.
+
+On resumption, inspect the separate directory and verify its sidecars before
+rerunning anything. The commands below were launched once for each of the four
+QUICK_GRID `(d,p)` pairs; rerun only missing/invalid workloads after checking
+that no previous process is still active:
+
+```sh
+VECLIB_MAXIMUM_THREADS=1 .venv/bin/python scripts/p1_run_functional.py --d 7 --p .003 --output-dir data/traces/day2_test_6b
+.venv/bin/python scripts/p1_report_day2.py --directory data/traces/day2_test_6b
+```
+
+The full report requires all four outputs and verifies sidecar hashes/settings.
+The last full suite at this checkpoint passed 162 tests with 1 expected failure.
+
 ## Recovery checkpoint: iteration 2
 
 The previous session completed six commits through 420e67f. The worktree was

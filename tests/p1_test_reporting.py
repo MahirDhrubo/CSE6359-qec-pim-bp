@@ -65,10 +65,12 @@ def test_report_verifies_sidecar_before_publishing(tmp_path, monkeypatch, capsys
     trace = io.write_table(df, FUNCTIONAL_COLS, tmp_path / f"functional_{w.tag}.parquet")
     meta = {"kind": "FUNCTIONAL", "output_sha256": hashlib.sha256(trace.read_bytes()).hexdigest(),
             "input_sha256": {str(shot_path): hashlib.sha256(shot_path.read_bytes()).hexdigest()},
-            "decoder_settings": {"quant_bits": 8, "range_x": mod.LLR_RANGE_X}}
+            "decoder_settings": {"quant_bits": 8, "range_x": mod.LLR_RANGE_X},
+            "float_diagnostics": {"osd_frac": .5}}
     sidecar = trace.with_suffix(".json")
     sidecar.write_text(json.dumps(meta))
-    assert len(mod.main(["--directory", str(tmp_path)])) == 1
+    rows = mod.main(["--directory", str(tmp_path)])
+    assert len(rows) == 1 and rows[0]["float_osd_frac"] == .5
     assert "TEST comparison" in capsys.readouterr().out
     meta["output_sha256"] = "stale"
     sidecar.write_text(json.dumps(meta))
