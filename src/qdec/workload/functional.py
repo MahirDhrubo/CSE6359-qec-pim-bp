@@ -11,14 +11,13 @@ from qdec.workload.bp_minsum import MinSumBP, channel_llrs
 from qdec.workload.circuits import make_circuit
 from qdec.workload.osd import OSD
 
-# T11 provisional decision (2026-10-31, TRAIN sweeps at d5/d7 x p=1e-3/3e-3):
-# fully covered setting with no significant LER degradation detected (paired McNemar)
-# AND OSD rate <= 1.15x float at every point. Minimal width is not established:
-# 6-bit x1.5 lacks d7 TRAIN coverage, and 7 bits has not been measured.
-# 5 bits passed at p=3e-3 but ran OSD 1.38-1.56x as often as float at p=1e-3; 6 bits x1 was
-# 1.21x at d5 p=1e-3. 8 bits x1: OSD 1.01-1.03x float everywhere measured.
-QUANT_BITS = 8
-LLR_RANGE_X = 1.0  # llr_max = this x the largest channel LLR of the workload's graph
+# T11 TRAIN decision (2026-11-02): 6 bits x1.5 passes the LER screening rule and
+# OSD <= 1.15x float on all four QUICK_GRID workloads. All lower-width candidates
+# in the declared domain (3–8 bits, ranges x1/x1.5/x2/x3) fail somewhere.
+# This is a minimum within that domain, not a proof for every possible quantizer.
+# Frozen from TRAIN before the new TEST validation; see DAY2_STATUS.md.
+QUANT_BITS = 6
+LLR_RANGE_X = 1.5  # llr_max = this x the largest channel LLR of the workload's graph
 
 
 def minsum_bposd_batch(

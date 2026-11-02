@@ -1,4 +1,39 @@
-# P1 Day 2 continuation — 2026-11-01
+# P1 Day 2 continuation — updated 2026-11-02
+
+## Recovery checkpoint: iteration 2
+
+The previous session completed six commits through 420e67f. The worktree was
+clean on recovery; no code needed to be redone. The last full suite reported
+162 passed and 1 xfailed. Sweep preservation/provenance, multi-directory audit,
+functional validation/provenance, TEST reporting and the proposed OSD-only
+benchmark are implemented. The timing proposal is explicitly not team-approved.
+
+Both long-running d7 TRAIN jobs finished successfully. Input and CSV hashes in
+their sidecars were verified against disk on 2026-11-02. Results:
+
+| TRAIN workload | 6-bit x1.5 failures | Float failures | Paired p | Quantized / float OSD |
+|---|---:|---:|---:|---:|
+| d7, p=.001 | 1 | 1 | 1.0 | .26315 / .2429 |
+| d7, p=.003 | 19 | 18 | .5 | .725 / .68015 |
+
+Together with saved d5 TRAIN measurements, 6-bit x1.5 passes all four workloads.
+It is the smallest passing width in the declared 3–8-bit, x1/x1.5/x2/x3 domain.
+7-bit testing is unnecessary to establish that bounded minimum. Settings were
+frozen from TRAIN on recovery, before starting new TEST generation. Existing
+8-bit TEST traces remain intact until the new traces are validated.
+
+Reproduce the selection audit:
+
+```sh
+.venv/bin/python scripts/p1_audit_quantization.py --additional-dir data/traces/day2_train_6b
+```
+
+Remaining: generate and validate 6-bit TEST traces, publish the comparison and
+settings in this P1-owned directory, and prepare the real-artifact handoff.
+P2 adoption, team communication and merging have not occurred.
+
+The sections below preserve the initial audit and plan as historical context;
+the recovery checkpoint above supersedes their pending-measurement statements.
 
 ## Preserved starting point
 
