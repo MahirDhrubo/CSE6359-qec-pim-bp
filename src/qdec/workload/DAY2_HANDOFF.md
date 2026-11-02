@@ -50,6 +50,32 @@ Python implementation; they are neither ldpc's internal OSD time nor hardware
 PIM latency. P2 owns adoption of a cost assumption and its YAML source label.
 No new timing column or shared interface is introduced by this handoff.
 
+**Status: proposal only, not agreed by the team (confirmed 2026-11-01).**
+
+Reviewable benchmark command (prints JSON; changes no cost-model files):
+
+```sh
+VECLIB_MAXIMUM_THREADS=1 .venv/bin/python scripts/p1_benchmark_osd.py --d 5 --p .001 --shots 1000
+```
+
+It uses the selected constants in `functional.py`. This small TEST prefix is a
+timing diagnostic, not full-grid LER validation or a representative tail study.
+The helper returns per-call shot IDs and durations in memory; its CLI prints
+summary percentiles only. A persistent per-shot handoff format remains to be
+agreed if P2 adopts this proposal.
+
+| Choice | Interpretation | Required evidence |
+|---|---|---|
+| Recommended: custom OSD-only benchmark | CPU fallback actually used by our functional pipeline | Time only `OSD.decode(syndrome, posterior)` on nonconverged TEST shots, after one untimed warm-up; exclude BP and setup; keep per-call timings and report workload, count, median/p99/p99.9, CPU, numerical-library thread settings and versions |
+| Explicit modeled constant | P2's approximation, not measured decoder time | Cited/justified assumption and sensitivity sweep; clearly label MODELED |
+| ldpc OSD-only benchmark | A different fallback implementation | Instrument ldpc's OSD stage separately; whole `BpOsdDecoder.decode` timing does not isolate it |
+
+Do not estimate OSD-only time by subtracting medians: fallback shots differ from
+BP-success shots, and a difference of aggregate medians is not a conditional
+per-call measurement. Also distinguish the constant fallback cost used by the
+current repricing formula from the measured distribution; a constant omits OSD
+timing tails. P2 should disclose or vary that approximation.
+
 ## Completion boundary
 
 P1 can deliver tested code, real traces and the comparison report. Team Day 2
