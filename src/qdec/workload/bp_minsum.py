@@ -28,9 +28,12 @@ class MinSumBP:
     Quantization (quant_bits = b): every stored message (channel LLRs, variable-to-check and
     check-to-variable) is a signed b-bit integer times step = llr_max / (2**(b-1) - 1), i.e.
     rounded to that grid and saturated at +-llr_max. There is deliberately no default: the range
-    trades resolution against saturation and is chosen per workload by the T11 sweep. It must
-    exceed the largest channel LLR (by more than 1/alpha), or a check message can never
-    outweigh a saturated prior and BP misses e.g. single errors at the end of a chain.
+    trades resolution against saturation. At the channel maximum a check message can fail
+    to outweigh a saturated prior, e.g. for single errors at the end of a repetition chain.
+    The production surface-code setting is selected empirically for BP+OSD, including its
+    fallback frequency; it does not guarantee BP-only convergence on arbitrary graphs.
+    Variable sums and posterior accumulators use float64 without saturation; a hardware
+    model needs sufficient accumulator width beyond the stored message width.
     """
 
     def __init__(
