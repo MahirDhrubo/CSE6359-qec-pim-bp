@@ -226,6 +226,8 @@ def main(argv=None) -> None:
     print(f"wrote {plots.plot_ler(functional, cache, out_dir / 'ler.png', note=ler_note)}")
     if cache:
         print(f"wrote {plots.plot_hit_rate(cache, out_dir / 'hit_rate.png', note=ler_note)}")
+    func_all = pd.concat(functional.values(), ignore_index=True)
+    print(f"wrote {plots.plot_iters_hist(func_all, out_dir / 'iters_hist.png', note=ler_note)}")
 
     summary_table(service).to_csv(out_dir / "summary.csv", index=False)
     print(f"wrote {out_dir / 'summary.csv'}")
@@ -248,7 +250,7 @@ def main(argv=None) -> None:
         print(f"wrote {path} (MOCK)")
         done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
                 plots.plot_ler, plots.plot_hit_rate, plots.plot_bytes_energy,
-                plots.plot_backlog_over_time}
+                plots.plot_backlog_over_time, plots.plot_iters_hist}
         placeholder_figures(service, out_dir, skip=done)
 
 

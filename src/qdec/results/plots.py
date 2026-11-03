@@ -594,10 +594,64 @@ def plot_ablation(summary: pd.DataFrame, out: Path) -> Path:
     raise NotImplementedError
 
 
-def plot_iters_hist(functional_df: pd.DataFrame, out: Path) -> Path:
-    """Histogram of bp_iters (log y), non-converged shots highlighted. Inputs: FUNCTIONAL_COLS.
-    Owner: P3."""
-    raise NotImplementedError
+def plot_iters_hist(
+    functional_df: pd.DataFrame,
+    out: Path,
+    note: str = "",
+    title: str = "BP iterations per decode window",
+) -> Path:
+    """Histogram of bp_iters (log count axis), converged vs non-converged shots in two colors;
+    one panel per tag when functional_df holds several (concatenated FUNCTIONAL_COLS tables).
+
+    Inputs:  FUNCTIONAL_COLS rows (tag, bp_iters, bp_converged).
+    Outputs: PNG at `out`. Each panel notes the share of 0-iteration (empty-syndrome) shots and
+             of non-converged shots, which pile up at the iteration cap and go to OSD.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(functional_df["tag"])) if "tag" in functional_df else ["(all)"]
+    ncols = 1 if len(tags) == 1 else 2
+    nrows = -(-len(tags) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.2 * nrows + 1.0),
+                             squeeze=False, sharex=True)
+    kinds = (("converged", SERIES[0], True), ("not converged (goes to OSD)", SERIES[1], False))
+    drawn = False
+    for ax, tag in zip(axes.flat, tags):
+        _style(ax)
+        f = functional_df if tag == "(all)" else functional_df[functional_df["tag"] == tag]
+        iters = _clean(f["bp_iters"].to_numpy(), f"plot_iters_hist: {tag}")
+        conv = f["bp_converged"].to_numpy(dtype=bool)[np.isfinite(f["bp_iters"].to_numpy(float))]
+        ax.set_title(tag, loc="left", fontsize=9, color=INK_2)
+        if len(iters) == 0:
+            warnings.warn(f"plot_iters_hist: skipping {tag!r}, no data", stacklevel=2)
+            ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center", color=MUTED)
+            continue
+        edges = np.arange(-0.5, iters.max() + 1.5)
+        for name, color, flag in kinds:
+            sel = iters[conv == flag]
+            if len(sel):
+                ax.hist(sel, bins=edges, color=color, label=name, rwidth=0.85)
+                drawn = True
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=0.7)
+        ax.text(0.62, 0.95, f"0 iterations (empty syndrome): {np.mean(iters == 0):.1%}\n"
+                f"not converged: {np.mean(~conv):.1%}", transform=ax.transAxes, ha="center",
+                va="top", fontsize=8, color=INK_2,
+                bbox={"fc": SURFACE, "ec": "none", "pad": 1.0})
+    for ax in axes.flat[len(tags):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("BP iterations")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("shots (log)")
+    fig.suptitle(f"{title}" + (f"\n{note}" if note else ""), x=0.02, ha="left", fontsize=11,
+                 color=INK)
+    if drawn:
+        handles, names = axes.flat[0].get_legend_handles_labels()
+        leg = fig.legend(handles, names, loc="lower center", ncol=2, fontsize=8, frameon=False)
+        for t in leg.get_texts():
+            t.set_color(INK_2)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    return _save(fig, out)
 
 
 ALL_PLOTS = (
