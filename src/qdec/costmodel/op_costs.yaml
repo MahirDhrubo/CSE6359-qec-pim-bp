@@ -84,6 +84,28 @@ dram_write_byte:
   status: CHECKED
   note: "Symmetric read/write is a simplification."
 
+l2_byte:
+  latency_ns: 0.0052
+  energy_pj: 12.5
+  capacity_bytes: 1048576
+  unit: "per byte streamed to/from an on-chip L2 (read or write); used while BP fits in capacity_bytes"
+  source: >-
+    Energy: Horowitz, ISSCC 2014 (1 MB cache, 64-bit access ~100 pJ -> 12.5 pJ/byte).
+    Latency: 1 / (64 B/cycle at 3 GHz), peak L2 bandwidth per core in the Intel 64 and IA-32
+    Architectures Optimization Reference Manual (Skylake server cache table)
+  status: VERIFY
+  note: "Peak, not sustained, bandwidth (favours the CPU baseline). Capacity 1 MB = Horowitz's array size."
+
+cpu_core_ns:
+  latency_ns: 1.0
+  energy_pj: 10000.0
+  unit: "per ns of one busy core (energy_pj per ns = 10 W)"
+  source: >-
+    ASSUMED single-core active power of 10 W, the same assumption as osd_ns; used only to turn
+    MEASURED bposd_cpu wall clock into energy
+  status: VERIFY
+  note: "Replace with the measuring CPU's package power / active cores if available."
+
 cpu_op:
   latency_ns: 0.333
   energy_pj: 70.0

@@ -11,7 +11,7 @@ import numpy as np
 
 from qdec.cache.splitter import Cluster
 
-KEY_VERSION = 1
+KEY_VERSION = 2   # v2: int8 packing (offsets and edge distances fit easily for d <= 127)
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,13 @@ class Boundary:
         return np.rint((np.asarray(coords, dtype=np.float64) - self.lo) / self.step).astype(np.int64)
 
 
+def sorted_grid(cluster: Cluster, boundary: Boundary) -> np.ndarray:
+    """Cluster detectors as int lattice indices, sorted lexicographically; row 0 is the anchor
+    that canonical_key measures offsets from (cam.py stores corrections relative to it too)."""
+    g = boundary.grid(cluster.coords)
+    return g[np.lexsort(g.T[::-1])]
+
+
 def canonical_key(cluster: Cluster, boundary: Boundary) -> bytes:
     """Map a cluster to a key that is identical for every translate of the same defect pattern.
 
@@ -63,14 +70,13 @@ def canonical_key(cluster: Cluster, boundary: Boundary) -> bytes:
     Contract: none on disk; used by cam.ClusterCache.
     Owner:   P2
     """
-    g = boundary.grid(cluster.coords)
-    g = g[np.lexsort(g.T[::-1])]
+    g = sorted_grid(cluster, boundary)
     anchor = g[0]
     span = boundary.grid(boundary.hi)
     edges = np.minimum(np.concatenate([g.min(axis=0), span - g.max(axis=0)]), boundary.clamp)
     sublattice = int(anchor[0] + anchor[1]) % 2 if g.shape[1] >= 2 else 0
-    header = np.array([KEY_VERSION, len(g), g.shape[1], sublattice, *edges], dtype=np.int16)
-    return header.tobytes() + (g - anchor).astype(np.int16).tobytes()
+    header = np.array([KEY_VERSION, len(g), g.shape[1], sublattice, *edges], dtype=np.int8)
+    return header.tobytes() + (g - anchor).astype(np.int8).tobytes()
 
 
 def is_isolated(cluster: Cluster, all_clusters: list[Cluster], boundary: Boundary) -> bool:
