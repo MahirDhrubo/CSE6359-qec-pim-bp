@@ -205,6 +205,8 @@ def main(argv=None) -> None:
 
     ler_note = "MOCK DATA" if args.mock else f"{len(functional)} workloads, SEED_TEST shots"
     print(f"wrote {plots.plot_ler(functional, cache, out_dir / 'ler.png', note=ler_note)}")
+    if cache:
+        print(f"wrote {plots.plot_hit_rate(cache, out_dir / 'hit_rate.png', note=ler_note)}")
 
     summary_table(service).to_csv(out_dir / "summary.csv", index=False)
     print(f"wrote {out_dir / 'summary.csv'}")
@@ -224,7 +226,7 @@ def main(argv=None) -> None:
         )
         print(f"wrote {path} (MOCK)")
         done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
-                plots.plot_ler}
+                plots.plot_ler, plots.plot_hit_rate}
         placeholder_figures(service, out_dir, skip=done)
 
 

@@ -239,14 +239,7 @@ def plot_ler(
              series is conditional on a cache hit (its N is the number of hits).
     Owner:   P3
     """
-    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
-    for tag in functional_dfs:
-        m = _TAG_RE.match(tag)
-        if m is None:
-            warnings.warn(f"plot_ler: skipping tag {tag!r}, not <code>_d<d>_p<p>_s<seed>",
-                          stacklevel=2)
-            continue
-        groups.setdefault((m["code"], int(m["d"])), []).append((float(m["p"]), tag))
+    groups = _tag_groups(functional_dfs, "plot_ler")
     labels = [s[0] for s in LER_SERIES]
     colors = _colors(labels)
     panels = sorted(groups)
@@ -431,9 +424,76 @@ def plot_max_rate(
     return _save(fig, out)
 
 
-def plot_hit_rate(cache_dfs: dict[str, pd.DataFrame], out: Path) -> Path:
-    """Cache hit rate vs p and d (and vs CAM size if provided). Inputs: CACHE_COLS. Owner: P3."""
-    raise NotImplementedError
+def _tag_groups(tags, fn_name: str) -> dict[tuple[str, int], list[tuple[float, str]]]:
+    """{(code, d): [(p, tag), ...] sorted by p}; tags that don't parse are skipped with a warning."""
+    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
+    for tag in tags:
+        m = _TAG_RE.match(tag)
+        if m is None:
+            warnings.warn(f"{fn_name}: skipping tag {tag!r}, not <code>_d<d>_p<p>_s<seed>",
+                          stacklevel=3)
+            continue
+        groups.setdefault((m["code"], int(m["d"])), []).append((float(m["p"]), tag))
+    return {k: sorted(v) for k, v in sorted(groups.items())}
+
+
+def plot_hit_rate(
+    cache_dfs: dict[str, pd.DataFrame],
+    out: Path,
+    note: str = "",
+    title: str = "DecodeCache hit rate",
+) -> Path:
+    """Cache hit rate vs p, one line per (code, distance), in two panels: all shots, and shots
+    with at least one cluster. Empty syndromes are always hits, so the left panel alone
+    overstates what the CAM contributes.
+
+    Inputs:  {tag: CACHE_COLS df} (cache_hit, n_clusters).
+    Outputs: PNG at `out`; points carry 95% Wilson intervals.
+    Owner:   P3
+    """
+    groups = _tag_groups(cache_dfs, "plot_hit_rate")
+    labels = [f"{c} d={d}" for c, d in groups]
+    colors = _colors(labels)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
+    panels = (("all shots", lambda df: df),
+              ("excluding empty syndromes", lambda df: df[df["n_clusters"] > 0]))
+    for ax, (name, pick) in zip(axes, panels):
+        _style(ax)
+        for (key, items), label in zip(groups.items(), labels):
+            pts = []
+            for p, tag in items:
+                hits = pick(cache_dfs[tag])["cache_hit"].dropna().astype(bool)
+                if len(hits):
+                    pts.append((p, int(hits.sum()), len(hits)))
+            if not pts:
+                warnings.warn(f"plot_hit_rate: {name}: skipping {label!r}, no data", stacklevel=2)
+                continue
+            x, k, n = zip(*pts)
+            rate = np.array(k) / np.array(n)
+            ci = np.array([wilson_interval(ki, ni) for ki, ni in zip(k, n)])
+            ax.errorbar(x, rate, yerr=[rate - ci[:, 0], ci[:, 1] - rate], color=colors[label],
+                        marker="o", markersize=5, linewidth=1.4, capsize=2, label=label,
+                        markeredgecolor=SURFACE, markeredgewidth=0.8)
+            if len(groups) <= 4:
+                ax.annotate(label, (x[-1], rate[-1]), xytext=(5, 0), textcoords="offset points",
+                            va="center", fontsize=8.5, color=INK_2)
+        ax.set_xscale("log")
+        ps = sorted({p for items in groups.values() for p, _ in items})
+        if ps:
+            ax.set_xticks(ps, [f"{p:g}" for p in ps])
+        _no_minor_labels(ax)
+        ax.set_ylim(0, 1.02)
+        ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+        ax.set_xlabel("physical error rate p")
+        ax.set_title(name, loc="left", fontsize=9, color=INK_2)
+    axes[0].set_ylabel("shots answered by the cache")
+    sub = "hit = every cluster found in the CAM and isolated; error bars: 95% Wilson" + (
+        f"  |  {note}" if note else "")
+    fig.suptitle(f"{title}\n{sub}", x=0.02, ha="left", fontsize=11, color=INK)
+    if axes[0].lines:
+        _legend(axes[1], loc="upper right")
+    fig.tight_layout()
+    return _save(fig, out)
 
 
 def plot_bytes_energy(service_df: pd.DataFrame, out: Path) -> Path:
