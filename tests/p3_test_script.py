@@ -30,8 +30,13 @@ def test_mock_run_writes_every_output(tmp_path, monkeypatch):
     assert set(rates["system"]) == {s.value for s in System}
     assert (rates["rate_hz"] <= rates["rate_stable_hz"] + 1e-6).all()   # tail criterion is stricter
     assert len(pd.read_csv(out / "summary.csv")) == 2 * len(System)
-    for name in ("max_rate.png", "backlog_explosion.png",
-                 f"latency_cdf_{QUICK_GRID[0].tag}.png"):
+    abl = pd.read_csv(out / "ablation.csv")
+    assert {"pim_nocache", "pim_cache", "full, controller off"} <= set(abl["variant"])
+    assert abl["variant"].str.startswith("full, cap at depth").sum() == 4 * 2   # 4 settings x 2 tags
+    for name in ("max_rate.png", "backlog_explosion.png", "ler.png", "hit_rate.png",
+                 "bytes_energy.png", "iters_hist.png", "ablation.png",
+                 f"latency_cdf_{QUICK_GRID[0].tag}.png",
+                 f"backlog_over_time_{QUICK_GRID[0].tag}.png"):
         assert (out / name).stat().st_size > 10_000
     assert (tmp_path / "results" / "backlog_explosion_synthetic.png").exists()
 

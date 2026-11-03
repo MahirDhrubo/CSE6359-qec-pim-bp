@@ -589,9 +589,65 @@ def plot_bytes_energy(
     return _save(fig, out)
 
 
-def plot_ablation(summary: pd.DataFrame, out: Path) -> Path:
-    """Ablation: pim_nocache -> pim_cache -> full (p99 / p99.9 and max rate). Owner: P3."""
-    raise NotImplementedError
+ABLATION_METRICS = (
+    ("p999_ns", "p99.9 latency incl. queueing (ns)"),
+    ("rate_stable_hz", "max stable round rate (Hz)"),
+)
+
+
+def plot_ablation(
+    summary: pd.DataFrame,
+    out: Path,
+    note: str = "",
+    title: str = "Ablation: what each component buys",
+) -> Path:
+    """One panel per metric present in `summary` (ABLATION_METRICS), x = variant in the order
+    given (e.g. pim_nocache -> pim_cache -> full without / with controller settings), one bar
+    per workload tag. Log y-axes; non-finite or non-positive values are labelled, not dropped.
+
+    Inputs:  DataFrame with tag, variant (or system), and any of p999_ns, rate_stable_hz.
+    Outputs: PNG at `out`.
+    Owner:   P3
+    """
+    key = "variant" if "variant" in summary else "system"
+    variants = list(dict.fromkeys(summary[key]))
+    tags = list(dict.fromkeys(summary["tag"]))
+    metrics = [(c, lb) for c, lb in ABLATION_METRICS if c in summary]
+    if not metrics:
+        raise ValueError(f"summary has none of {[c for c, _ in ABLATION_METRICS]}")
+    colors = _colors(tags)
+    fig, axes = plt.subplots(len(metrics), 1, figsize=(max(7.5, 1.25 * len(variants) + 2.5),
+                                                       3.3 * len(metrics) + 1.0),
+                             sharex=True, squeeze=False)
+    width = 0.8 / max(1, len(tags))
+    x0 = np.arange(len(variants))
+    for ax, (col, ylabel) in zip(axes[:, 0], metrics):
+        _style(ax)
+        table = summary.pivot_table(index=key, columns="tag", values=col, aggfunc="first",
+                                    dropna=False).reindex(index=variants, columns=tags)
+        for j, tag in enumerate(tags):
+            v = table[tag].to_numpy(dtype=np.float64)
+            xs = x0 + (j - (len(tags) - 1) / 2) * width
+            ok = np.isfinite(v) & (v > 0)
+            if not ok.any():
+                warnings.warn(f"plot_ablation: {col}: skipping {tag!r}, no positive finite data",
+                              stacklevel=2)
+            ax.bar(xs[ok], v[ok], width=width * 0.9, color=colors[tag],
+                   label=tag if ax is axes[0, 0] else None)
+            for xi, vi in zip(xs[~ok], v[~ok]):
+                ax.annotate("n/a" if not np.isfinite(vi) else "0", (xi, 0),
+                            xycoords=("data", "axes fraction"), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7, color=INK_2)
+        ax.set_yscale("log")
+        ax.set_ylim(*_log_limits(table.to_numpy(), pad=(0.3, 3.0)))
+        ax.set_ylabel(ylabel)
+    axes[-1, 0].set_xticks(x0, variants, rotation=20, ha="right", fontsize=8.5)
+    fig.suptitle(f"{title}" + (f"\n{note}" if note else ""), x=0.02, ha="left", fontsize=11,
+                 color=INK)
+    if axes[0, 0].patches:
+        _legend(axes[0, 0], loc="upper right", ncol=min(2, len(tags)))
+    fig.tight_layout()
+    return _save(fig, out)
 
 
 def plot_iters_hist(

@@ -21,6 +21,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from qdec import io
@@ -172,8 +173,7 @@ def backlog_figures(service, functional, iter_costs, max_iters_arg, out_dir, not
     the fastest system) runs at 90% utilization: fast systems keep up there, slow ones don't."""
     for tag, svc in service.groupby("tag", sort=False):
         inputs = system_inputs(tag, svc, functional[tag], iter_costs, max_iters_arg)
-        ref = inputs.get(System.PIM_CACHE.value) or min(inputs.values(), key=lambda v: v[0].mean())
-        period = ref[0].mean() / 0.9
+        period = reference_period(inputs)
         if not period > 0:
             print(f"warning: {tag}: reference mean service is 0; no backlog figure")
             continue
@@ -182,6 +182,49 @@ def backlog_figures(service, functional, iter_costs, max_iters_arg, out_dir, not
             sims, out_dir / f"backlog_over_time_{tag}.png", period,
             note=f"{tag}  |  period = PIM_CACHE mean / 0.9  |  {'MOCK' if 'MOCK' in note else 'MODELED'}")
         print(f"wrote {path}")
+
+
+def reference_period(inputs: dict, utilization: float = 0.9) -> float:
+    """Round period at which PIM_CACHE (else the fastest system) runs at `utilization`."""
+    ref = inputs.get(System.PIM_CACHE.value) or min(inputs.values(), key=lambda v: v[0].mean())
+    return float(ref[0].mean() / utilization)
+
+
+# Controller threshold settings swept in the ablation: (low_depth, high_depth)
+ABLATION_THRESHOLDS = ((1, 4), (2, 10), (4, 20), (8, 40))
+MAX_ABLATION_TAGS = 4
+
+
+def ablation_table(service, functional, iter_costs, max_iters_arg) -> pd.DataFrame:
+    """pim_nocache -> pim_cache -> full without controller -> full with each threshold setting:
+    p99.9 latency (queueing + service) at reference_period, and max stable round rate."""
+    rows = []
+    tags = list(dict.fromkeys(service["tag"]))[:MAX_ABLATION_TAGS]
+    for tag in tags:
+        svc = service[service["tag"] == tag]
+        inputs = system_inputs(tag, svc, functional[tag], iter_costs, max_iters_arg)
+        period = reference_period(inputs)
+        variants = {s: inputs[s] for s in (System.PIM_NOCACHE.value, System.PIM_CACHE.value)
+                    if s in inputs}
+        full = inputs.get(System.FULL.value)
+        if full is not None:
+            s_full, kw = full
+            variants["full, controller off"] = (s_full, {})
+            ctl = kw.get("controller")
+            if ctl is not None:
+                for low, high in ABLATION_THRESHOLDS:
+                    c = BacklogController(ctl.max_iters, min_iters=ctl.min_iters,
+                                          low_depth=low, high_depth=high)
+                    variants[f"full, cap at depth {low}-{high}"] = (s_full, {**kw, "controller": c})
+        for name, (s, kw) in variants.items():
+            r = simulate(s, period, **kw) if period > 0 else None
+            rows.append({
+                "tag": tag, "variant": name, "period_ns": period,
+                "p999_ns": float(np.quantile(r.latency_ns, 0.999)) if r else np.nan,
+                "peak_depth": int(r.queue_depth.max()) if r else -1,
+                "rate_stable_hz": max_sustainable_rate(s, **kw),
+            })
+    return pd.DataFrame(rows)
 
 
 def compare_full(tag, svc, full_s, kw, full_rate, out, budget_ns) -> None:
@@ -240,6 +283,11 @@ def main(argv=None) -> None:
     crit = f"p99.9 latency <= {args.latency_budget_ns / 1e3:g} us, full uses the controller"
     print(f"wrote {plots.plot_max_rate(rates, out_dir / 'max_rate.png', note=f'{crit}  |  {note}')}")
     backlog_figures(service, functional, iter_costs, args.max_iters, out_dir, note)
+    abl = ablation_table(service, functional, iter_costs, args.max_iters)
+    abl.to_csv(out_dir / "ablation.csv", index=False)
+    abl_note = ("p99.9 at the round period where pim_cache runs at 90% utilization"
+                f"  |  {'MOCK' if args.mock else 'MODELED'}")
+    print(f"wrote {plots.plot_ablation(abl, out_dir / 'ablation.png', note=abl_note)}")
 
     if args.mock:
         tag = grid[0].tag
@@ -250,7 +298,8 @@ def main(argv=None) -> None:
         print(f"wrote {path} (MOCK)")
         done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
                 plots.plot_ler, plots.plot_hit_rate, plots.plot_bytes_energy,
-                plots.plot_backlog_over_time, plots.plot_iters_hist}
+                plots.plot_backlog_over_time, plots.plot_iters_hist,
+                plots.plot_ablation}
         placeholder_figures(service, out_dir, skip=done)
 
 
