@@ -496,9 +496,59 @@ def plot_hit_rate(
     return _save(fig, out)
 
 
-def plot_bytes_energy(service_df: pd.DataFrame, out: Path) -> Path:
-    """Bytes moved and energy per decode per System (MODELED). Inputs: SERVICE_COLS. Owner: P3."""
-    raise NotImplementedError
+def plot_bytes_energy(
+    service_df: pd.DataFrame,
+    out: Path,
+    note: str = "MODELED",
+    title: str = "Data movement and energy per decode",
+) -> Path:
+    """Mean bytes moved and mean energy per decode, grouped by workload, one bar per System.
+
+    Two panels (one per measure, each its own log axis) rather than a dual-axis chart. Means are
+    the right summary here: energy and bytes add up over shots, unlike latency.
+    Inputs:  SERVICE_COLS rows (energy_nj, bytes_moved), any number of tags.
+    Outputs: PNG at `out`. A mean of exactly 0 is labelled "0" instead of vanishing on log axes.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(service_df["tag"]))
+    systems = list(dict.fromkeys(service_df["system"]))
+    colors = _colors(systems)
+    measures = (("energy_nj", "energy per decode (nJ)"), ("bytes_moved", "bytes moved per decode"))
+    fig, axes = plt.subplots(2, 1, figsize=(max(7.0, 1.3 * len(tags) + 3), 6.6), sharex=True)
+    width = 0.8 / max(1, len(systems))
+    x0 = np.arange(len(tags))
+    for ax, (col, ylabel) in zip(axes, measures):
+        _style(ax)
+        means = np.full((len(systems), len(tags)), np.nan)
+        for i, sname in enumerate(systems):
+            for j, tag in enumerate(tags):
+                g = service_df[(service_df["system"] == sname) & (service_df["tag"] == tag)]
+                v = _clean(g[col].to_numpy(), f"plot_bytes_energy: {tag}/{sname}/{col}")
+                if len(v):
+                    means[i, j] = v.mean()
+            row = means[i]
+            if not np.isfinite(row).any():
+                warnings.warn(f"plot_bytes_energy: skipping system {sname!r} for {col}, no data",
+                              stacklevel=2)
+                continue
+            xs = x0 + (i - (len(systems) - 1) / 2) * width
+            ok = np.isfinite(row) & (row > 0)
+            ax.bar(xs[ok], row[ok], width=width * 0.9, color=colors[sname], label=sname)
+            for xi, v in zip(xs[np.isfinite(row) & (row <= 0)], row[np.isfinite(row) & (row <= 0)]):
+                ax.annotate("0", (xi, 0), xycoords=("data", "axes fraction"), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7, color=INK_2)
+        ax.set_yscale("log")
+        lo, hi = _log_limits(means, pad=(0.3, 3.0))
+        ax.set_ylim(lo, hi)
+        ax.set_ylabel(ylabel)
+    axes[-1].set_xticks(x0, tags, rotation=20 if len(tags) > 4 else 0, ha="right"
+                        if len(tags) > 4 else "center", fontsize=8)
+    fig.suptitle(f"{title}\nmean over SEED_TEST shots  |  {note}", x=0.02, ha="left",
+                 fontsize=11, color=INK)
+    if axes[0].patches:
+        _legend(axes[0], loc="upper left", ncol=min(4, len(systems)))
+    fig.tight_layout()
+    return _save(fig, out)
 
 
 def plot_ablation(summary: pd.DataFrame, out: Path) -> Path:

@@ -212,6 +212,7 @@ def main(argv=None) -> None:
     print(f"wrote {out_dir / 'summary.csv'}")
     for tag, svc in service.groupby("tag", sort=False):
         print(f"wrote {plots.plot_latency_cdf(svc, out_dir / f'latency_cdf_{tag}.png', note=note)}")
+    print(f"wrote {plots.plot_bytes_energy(service, out_dir / 'bytes_energy.png', note=note)}")
 
     rates = rate_table(service, functional, iter_costs, args.latency_budget_ns, args.max_iters)
     rates.to_csv(out_dir / "max_rate.csv", index=False)
@@ -226,7 +227,7 @@ def main(argv=None) -> None:
         )
         print(f"wrote {path} (MOCK)")
         done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
-                plots.plot_ler, plots.plot_hit_rate}
+                plots.plot_ler, plots.plot_hit_rate, plots.plot_bytes_energy}
         placeholder_figures(service, out_dir, skip=done)
 
 
