@@ -79,12 +79,16 @@ def best_budget(rows: pd.DataFrame, iter_costs: dict, max_iters: int) -> int:
 
 def uncapped_mismatch(service_ns: np.ndarray, rows: pd.DataFrame, iter_costs: dict,
                       max_iters: int) -> float:
-    """Median relative gap between P2's service latency and reprice() at the full budget.
+    """Cost-weighted gap between P2's service latency and reprice() at the full budget:
+    sum |reprice - service| / sum service.
 
     Near 0 means service_<tag>.parquet and iter_costs.json describe the same cost model, so the
     controller only changes what capping changes. Large values mean they disagree (expected for
-    mocks); report it rather than silently comparing two different models.
+    mocks); report it rather than silently comparing two different models. (A median relative
+    error was used first; it read 64% on real data whose means agree to 0.01%, because ~2 ns
+    vs 0 ns cache hits dominate a per-shot relative error.)
     """
     full = BacklogController(max_iters).reprice_all(rows, max_iters, iter_costs)
     s = np.asarray(service_ns, dtype=np.float64)
-    return float(np.median(np.abs(full - s) / np.maximum(s, 1e-12)))
+    total = s.sum()
+    return float(np.abs(full - s).sum() / total) if total > 0 else float("nan")

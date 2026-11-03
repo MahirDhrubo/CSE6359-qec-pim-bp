@@ -145,7 +145,7 @@ def system_inputs(tag, svc, functional_tag, iter_costs, max_iters_arg, verbose=F
         gap = uncapped_mismatch(rows["latency_ns"], rows, costs, max_iters)
         print(f"{tag}: max_iters={max_iters}{'' if max_iters_arg else ' (inferred)'}, "
               f"controller floor b*={floor}, "
-              f"service-table vs iter_costs median gap for full = {gap:.0%}")
+              f"service-table vs iter_costs cost-weighted gap for full = {gap:.0%}")
     ctl = BacklogController(max_iters, min_iters=floor)
     out[System.FULL.value] = (ctl.reprice_all(rows, max_iters, costs),
                               {"controller": ctl, "rows": rows, "iter_costs": costs})

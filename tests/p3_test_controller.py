@@ -154,3 +154,13 @@ def test_cost_aware_floor_never_hurts_max_rate():
     on = max_sustainable_rate(base, c, latency_budget_ns=10_000, rows=rows, iter_costs=COSTS)
     off = max_sustainable_rate(base, latency_budget_ns=10_000)
     assert on >= off * 0.99
+
+
+def test_uncapped_mismatch_not_dominated_by_near_zero_cache_hits():
+    """Many tiny cache-hit costs off by a few ns must not look like a model mismatch."""
+    rows = pd.DataFrame({"path": ["cache"] * 900 + ["bp"] * 100,
+                         "bp_iters": [0] * 900 + [10] * 100, "osd_ran": False})
+    costs = {"per_iter_ns": 1000.0, "osd_ns": 1e5, "cache_ns": 3.0}
+    table = BacklogController(50).reprice_all(rows, 50, costs).copy()
+    table[:900] = 0.0                       # P2 charges 0 ns where iter_costs says 3 ns
+    assert uncapped_mismatch(table, rows, costs, 50) < 0.01
