@@ -80,7 +80,9 @@ def placeholder_figures(service_df: pd.DataFrame, out_dir, skip=()) -> None:
 
 def load_inputs(grid, mock: bool):
     """-> service DataFrame (all tags), {tag: functional df}, {tag: cache df},
-    {tag: {system: costs}}. A missing cache trace is left out (plot_ler skips that series)."""
+    {tag: {system: costs}}. A workload whose service table or functional trace is missing is
+    skipped with a warning (FULL_GRID lands gradually); FileNotFoundError only if none exist.
+    A missing cache trace is left out (plot_ler / plot_hit_rate skip that series)."""
     if mock:
         from qdec.mocks import mock_cache, mock_functional, mock_service
         service = pd.concat([mock_service(w.tag, n=w.shots) for w in grid], ignore_index=True)
@@ -88,14 +90,22 @@ def load_inputs(grid, mock: bool):
         cache = {w.tag: mock_cache(w.tag, n=w.shots) for w in grid}
         iter_costs = {w.tag: {s.value: dict(MOCK_ITER_COSTS) for s in System} for w in grid}
         return service, functional, cache, iter_costs
-    service = pd.concat(
-        [io.read_table(COSTS_DIR / f"service_{w.tag}.parquet", SERVICE_COLS) for w in grid],
-        ignore_index=True,
-    )
-    functional = {w.tag: io.read_table(TRACES_DIR / f"functional_{w.tag}.parquet", FUNCTIONAL_COLS)
-                  for w in grid}
-    cache = {}
+    services, functional, cache = [], {}, {}
     for w in grid:
+        s_path = COSTS_DIR / f"service_{w.tag}.parquet"
+        f_path = TRACES_DIR / f"functional_{w.tag}.parquet"
+        missing = [str(p) for p in (s_path, f_path) if not p.exists()]
+        if missing:
+            print(f"warning: skipping {w.tag}, missing {', '.join(missing)}")
+            continue
+        services.append(io.read_table(s_path, SERVICE_COLS))
+        functional[w.tag] = io.read_table(f_path, FUNCTIONAL_COLS)
+    if not services:
+        raise FileNotFoundError(f"no service table for any workload in {COSTS_DIR}")
+    service = pd.concat(services, ignore_index=True)
+    for w in grid:
+        if w.tag not in functional:
+            continue
         path = TRACES_DIR / f"cache_{w.tag}.parquet"
         if path.exists():
             cache[w.tag] = io.read_table(path, CACHE_COLS)
@@ -121,7 +131,16 @@ def rate_table(service, functional, iter_costs, budget_ns: float, max_iters_arg)
     for tag, svc in service.groupby("tag", sort=False):
         max_iters = max_iters_arg or int(functional[tag]["bp_iters"].max())
         rows = controller_rows(svc, functional[tag])
-        costs = iter_costs[tag][System.FULL.value]
+        costs = iter_costs.get(tag, {}).get(System.FULL.value)
+        if costs is None or rows.empty:
+            print(f"warning: {tag}: no iter_costs or FULL rows; full is simulated without "
+                  f"the controller")
+            for system, g in svc.groupby("system", sort=False):
+                s = g.sort_values("shot_id")["latency_ns"].to_numpy()
+                out.append({"tag": tag, "system": system,
+                            "rate_stable_hz": max_sustainable_rate(s),
+                            "rate_hz": max_sustainable_rate(s, latency_budget_ns=budget_ns)})
+            continue
         gap = uncapped_mismatch(rows["latency_ns"], rows, costs, max_iters)
         floor = best_budget(rows, costs, max_iters)
         print(f"{tag}: max_iters={max_iters}{'' if max_iters_arg else ' (inferred)'}, "
@@ -184,7 +203,7 @@ def main(argv=None) -> None:
     note = "MOCK DATA" if args.mock else REAL_NOTE
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ler_note = "MOCK DATA" if args.mock else f"{len(grid)} workloads, SEED_TEST shots"
+    ler_note = "MOCK DATA" if args.mock else f"{len(functional)} workloads, SEED_TEST shots"
     print(f"wrote {plots.plot_ler(functional, cache, out_dir / 'ler.png', note=ler_note)}")
 
     summary_table(service).to_csv(out_dir / "summary.csv", index=False)

@@ -41,3 +41,31 @@ def test_real_mode_without_inputs_raises_file_not_found(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError):
         load_script().main([])
+
+
+def test_real_mode_skips_missing_workloads(tmp_path, monkeypatch, capsys):
+    """FULL_GRID lands gradually: present workloads are processed, missing ones only warned."""
+    import json
+
+    from qdec import io
+    from qdec.contracts import CACHE_COLS, FUNCTIONAL_COLS, SERVICE_COLS
+    from qdec.mocks import mock_cache, mock_functional, mock_service
+
+    monkeypatch.chdir(tmp_path)
+    mod = load_script()
+    grid = [dataclasses.replace(w, shots=2000) for w in QUICK_GRID[:2]]
+    monkeypatch.setattr(mod, "QUICK_GRID", grid)
+    have = grid[0].tag
+    io.write_table(mock_service(have, n=2000), SERVICE_COLS,
+                   f"data/costs/service_{have}.parquet")
+    io.write_table(mock_functional(have, n=2000), FUNCTIONAL_COLS,
+                   f"data/traces/functional_{have}.parquet")
+    io.write_table(mock_cache(have, n=2000), CACHE_COLS, f"data/traces/cache_{have}.parquet")
+    costs = {"per_iter_ns": 20.0, "osd_ns": 2000.0, "cache_ns": 10.0}
+    (tmp_path / "data/costs/iter_costs.json").write_text(
+        json.dumps({have: {s.value: costs for s in System}}))
+    mod.main([])
+    assert f"skipping {grid[1].tag}" in capsys.readouterr().out
+    rates = pd.read_csv(tmp_path / "results" / "max_rate.csv")
+    assert set(rates["tag"]) == {have}
+    assert (tmp_path / "results" / "ler.png").exists()
