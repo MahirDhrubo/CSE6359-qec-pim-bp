@@ -36,7 +36,8 @@ def bposd_decode_batch(
     Inputs:  graph (H, L, priors) from GRAPHS_DIR; dets bool[S x D], obs bool[S x O] from SHOTS_DIR.
     Outputs: {"fail": bool[S], "bp_iters": int[S], "bp_converged": bool[S], "osd_ran": bool[S],
               "latency_ns": float[S]  (MEASURED wall clock, time.perf_counter_ns per shot)}.
-    Contract: fail -> FUNCTIONAL_COLS.fail_bp_float; latency_ns -> P2's bposd_cpu service rows.
+    Contract: latency_ns -> P2's bposd_cpu service rows (bposd_latency_<tag>.npz). fail is the
+             ldpc reference; FUNCTIONAL_COLS.fail_bp_float uses functional.minsum_bposd_batch.
     Owner:   P1
 
     Timing covers only decoder.decode(syndrome), one shot at a time on one thread, after one

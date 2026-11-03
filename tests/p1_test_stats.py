@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from qdec.workload.stats import cis_overlap, latency_percentiles, wilson_ci
+from qdec.workload.stats import cis_overlap, latency_percentiles, paired_worse_pvalue, wilson_ci
 
 
 def test_wilson_contains_estimate_and_stays_in_bounds():
@@ -36,3 +36,12 @@ def test_latency_percentiles_in_us():
     r = latency_percentiles(np.arange(1, 1001) * 1e3)  # 1..1000 us
     assert r["p50"] == pytest.approx(500.5) and r["max"] == 1000.0
     assert list(r) == ["p50", "p90", "p99", "p99.9", "max"]
+
+
+def test_paired_worse_pvalue():
+    a = np.array([1, 1, 1, 0, 0, 0], bool)
+    b = np.array([0, 0, 0, 0, 0, 0], bool)
+    n_ab, n_ba, p = paired_worse_pvalue(a, b)
+    assert (n_ab, n_ba) == (3, 0) and p == pytest.approx(0.125)
+    assert paired_worse_pvalue(b, a)[2] == pytest.approx(1.0)
+    assert paired_worse_pvalue(a, a) == (0, 0, 1.0)  # identical decoders: no evidence
