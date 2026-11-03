@@ -2,7 +2,16 @@
 """One function per figure. Each takes already-loaded tables and writes one file under RESULTS_DIR.
 
 Every figure showing hardware latency/energy must say MODELED in its title or caption.
+
+Robustness rules shared by every plot (real data has zeros, NaNs and missing systems):
+- NaN/Inf values are dropped with a warning; a system left with no data is skipped with a
+  warning instead of crashing.
+- Log-axis limits come only from finite, positive values (_log_limits).
+- A rate with zero observed failures is drawn as its 95% upper bound 3/N ("rule of three") with a
+  hollow down-triangle marker and a legend note, never dropped (failure_rate, _plot_rates).
 """
+import re
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -61,6 +70,91 @@ def _one_tag(df: pd.DataFrame) -> str:
     return str(tags[0])
 
 
+def _no_minor_labels(ax, axis: str = "x") -> None:
+    """Narrow log ranges make matplotlib label minor ticks, which collide; keep majors only."""
+    getattr(ax, f"{axis}axis").set_minor_formatter(matplotlib.ticker.NullFormatter())
+
+
+def _clean(values, what: str) -> np.ndarray:
+    """Float array without NaN/Inf; warns with a count when anything was dropped."""
+    v = np.asarray(values, dtype=np.float64)
+    bad = ~np.isfinite(v)
+    if bad.any():
+        warnings.warn(f"{what}: dropped {bad.sum()} NaN/Inf of {len(v)} values", stacklevel=3)
+    return v[~bad]
+
+
+def _series(df: pd.DataFrame, system: str, column: str, what: str) -> np.ndarray | None:
+    """One system's `column` in shot order, cleaned; None (with a warning) if nothing is left."""
+    g = df[df["system"] == system]
+    if "shot_id" in g:
+        g = g.sort_values("shot_id")
+    v = _clean(g[column].to_numpy(), f"{what}: {system}")
+    if len(v) == 0:
+        warnings.warn(f"{what}: skipping system {system!r}, no data", stacklevel=2)
+        return None
+    return v
+
+
+def _log_limits(values, extra=(), pad=(0.5, 4.0), fallback=(1.0, 10.0)) -> tuple[float, float]:
+    """(lo, hi) for a log axis from the finite positive entries of values + extra."""
+    v = np.concatenate([np.ravel(np.asarray(values, dtype=np.float64)),
+                        np.asarray([e for e in extra if e is not None], dtype=np.float64)])
+    v = v[np.isfinite(v) & (v > 0)]
+    if len(v) == 0:
+        return fallback
+    return float(v.min() * pad[0]), float(v.max() * pad[1])
+
+
+def failure_rate(k: int, n: int) -> tuple[float, bool]:
+    """Observed failure rate k/n, or its 95% upper bound 3/n when k == 0 (rule of three).
+
+    Returns (rate, is_upper_bound); (nan, False) when n == 0.
+    """
+    if n <= 0:
+        return float("nan"), False
+    if k == 0:
+        return 3.0 / n, True
+    return k / n, False
+
+
+def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for k failures in n trials (P3's own copy: no cross-imports)."""
+    if n <= 0:
+        return float("nan"), float("nan")
+    p = k / n
+    den = 1 + z * z / n
+    mid = (p + z * z / (2 * n)) / den
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return max(0.0, mid - half), min(1.0, mid + half)
+
+
+def _plot_rates(ax, x, k, n, color: str, label: str) -> bool:
+    """Plot failure rates with Wilson error bars; k == 0 points become hollow down-triangles at
+    the 3/N upper bound. Returns True if any upper bound was drawn (caller adds the legend note).
+    """
+    pts = [(xi, *failure_rate(int(ki), int(ni)), int(ki), int(ni))
+           for xi, ki, ni in zip(x, k, n) if ni > 0]
+    if not pts:
+        return False
+    pts.sort()
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    ax.plot(xs, ys, color=color, linewidth=1.4, label=label, zorder=2)
+    seen = [p for p in pts if not p[2]]
+    if seen:
+        lo_hi = np.array([wilson_interval(p[3], p[4]) for p in seen])
+        y = np.array([p[1] for p in seen])
+        ax.errorbar([p[0] for p in seen], y, yerr=[y - lo_hi[:, 0], lo_hi[:, 1] - y], fmt="o",
+                    color=color, markersize=5, capsize=2, linewidth=1, zorder=3,
+                    markeredgecolor=SURFACE, markeredgewidth=0.8)
+    bounds = [p for p in pts if p[2]]
+    if bounds:
+        ax.plot([p[0] for p in bounds], [p[1] for p in bounds], "v", markersize=7, zorder=3,
+                markerfacecolor=SURFACE, markeredgecolor=color, markeredgewidth=1.4)
+    return bool(bounds)
+
+
 def _save(fig, out: Path) -> Path:
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +184,9 @@ def plot_backlog_explosion(
     fig, ax = plt.subplots(figsize=(8, 4.2))
     _style(ax)
     for lb in labels:
-        s = service_df[service_df["system"] == lb].sort_values("shot_id")["latency_ns"].to_numpy()
+        s = _series(service_df, lb, "latency_ns", "plot_backlog_explosion")
+        if s is None:
+            continue
         r = simulate(s, round_period_ns)
         p999 = np.quantile(r.latency_ns, 0.999) / round_period_ns
         ax.step(np.arange(len(s)), r.queue_depth, where="post", color=colors[lb], linewidth=1.4,
@@ -105,15 +201,108 @@ def plot_backlog_explosion(
     ax.set_ylim(bottom=0)
     ax.margins(x=0.01)
     _titles(ax, title, f"round period T = {round_period_ns:g} ns" + (f"  |  {note}" if note else ""))
-    _legend(ax, loc="upper left")
+    if ax.lines:
+        _legend(ax, loc="upper left")
     return _save(fig, out)
 
 
-def plot_ler(functional_dfs: dict[str, pd.DataFrame], cache_dfs: dict[str, pd.DataFrame],
-             out: Path) -> Path:
-    """Logical error rate vs p per distance (quantized BP+OSD, float BP+OSD, matching, cache path).
-    Inputs: FUNCTIONAL_COLS + CACHE_COLS per tag. Owner: P3."""
-    raise NotImplementedError
+_TAG_RE = re.compile(r"^(?P<code>[a-z]+)_d(?P<d>\d+)_p(?P<p>[^_]+)_s(?P<seed>\d+)$")
+# (label, source table, failure column); the cache series only counts cache hits
+LER_SERIES = (
+    ("BP+OSD quantized", "functional", "fail_bp_osd"),
+    ("BP+OSD float (reference)", "functional", "fail_bp_float"),
+    ("PyMatching", "functional", "fail_matching"),
+    ("cache path (hits only)", "cache", "fail_cache"),
+)
+
+
+def _counts(df: pd.DataFrame | None, column: str) -> tuple[int, int]:
+    """(failures, trials) over the non-null entries of a bool/boolean column."""
+    if df is None or column not in df:
+        return 0, 0
+    v = df[column].dropna()
+    return int(v.astype(bool).sum()), len(v)
+
+
+def plot_ler(
+    functional_dfs: dict[str, pd.DataFrame],
+    cache_dfs: dict[str, pd.DataFrame],
+    out: Path,
+    note: str = "",
+    title: str = "Logical error rate vs physical error rate",
+) -> Path:
+    """Logical error rate per decode window vs p, one panel per (code, distance).
+
+    Inputs:  {tag: FUNCTIONAL_COLS df} and {tag: CACHE_COLS df} (cache may be missing tags).
+    Outputs: PNG at `out`. Observed rates carry 95% Wilson error bars; a series with 0 failures
+             at some p is drawn at its 95% upper bound 3/N with a hollow down-triangle. The cache
+             series is conditional on a cache hit (its N is the number of hits).
+    Owner:   P3
+    """
+    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
+    for tag in functional_dfs:
+        m = _TAG_RE.match(tag)
+        if m is None:
+            warnings.warn(f"plot_ler: skipping tag {tag!r}, not <code>_d<d>_p<p>_s<seed>",
+                          stacklevel=2)
+            continue
+        groups.setdefault((m["code"], int(m["d"])), []).append((float(m["p"]), tag))
+    labels = [s[0] for s in LER_SERIES]
+    colors = _colors(labels)
+    panels = sorted(groups)
+    ncols = min(2, max(1, len(panels)))
+    nrows = max(1, -(-len(panels) // ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.6 * nrows + 0.9), squeeze=False)
+    any_bound, all_rates = False, []
+    for ax, key in zip(axes.flat, panels):
+        _style(ax)
+        ax.grid(axis="x", color=GRID, linewidth=0.6)
+        for label, source, col in LER_SERIES:
+            pts = []
+            for p, tag in sorted(groups[key]):
+                df = functional_dfs[tag] if source == "functional" else cache_dfs.get(tag)
+                k, n = _counts(df, col)
+                if n:
+                    pts.append((p, k, n))
+                    all_rates.append(failure_rate(k, n)[0])
+            if not pts:
+                warnings.warn(f"plot_ler: {key[0]} d={key[1]}: skipping {label!r}, no data",
+                              stacklevel=2)
+                continue
+            x, k, n = zip(*pts)
+            any_bound |= _plot_rates(ax, x, k, n, colors[label], label)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ps = sorted({p for p, _ in groups[key]})
+        ax.set_xticks(ps, [f"{p:g}" for p in ps])         # label the simulated p values exactly
+        _no_minor_labels(ax)
+        ax.set_title(f"{key[0]} code, d = {key[1]}", loc="left", fontsize=9, color=INK_2)
+        ax.set_xlabel("physical error rate p")
+        ax.set_ylabel("logical error rate per window")
+    for ax in axes.flat[len(panels):]:
+        ax.set_visible(False)
+    lo, hi = _log_limits(all_rates, pad=(0.3, 3.0), fallback=(1e-6, 1.0))
+    for ax in axes.flat[: len(panels)]:
+        ax.set_ylim(lo, min(hi, 1.0))
+    handles, names = [], []
+    for ax in axes.flat[: len(panels)]:
+        for h, lb in zip(*ax.get_legend_handles_labels()):
+            if lb not in names:
+                handles.append(h)
+                names.append(lb)
+    if any_bound:
+        handles.append(plt.Line2D([], [], linestyle="none", marker="v", markersize=7,
+                                  markerfacecolor=SURFACE, markeredgecolor=INK_2))
+        names.append("0 failures: drawn at the 95% upper bound 3/N")
+    sub = "error bars: 95% Wilson interval" + (f"  |  {note}" if note else "")
+    fig.suptitle(f"{title}\n{sub}", x=0.02, ha="left", fontsize=11, color=INK)
+    if handles:
+        leg = fig.legend(handles, names, loc="lower center", ncol=2, fontsize=8, frameon=False,
+                         bbox_to_anchor=(0.5, -0.02))
+        for t in leg.get_texts():
+            t.set_color(INK_2)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    return _save(fig, out)
 
 
 def plot_latency_cdf(
@@ -137,15 +326,28 @@ def plot_latency_cdf(
     fig, ax = plt.subplots(figsize=(8, 4.6))
     _style(ax)
     ax.grid(axis="x", color=GRID, linewidth=0.6)
+    shown = []
     for lb in labels:
-        x = np.sort(service_df.loc[service_df["system"] == lb, column].to_numpy())
+        x = _series(service_df, lb, column, "plot_latency_cdf")
+        if x is None:
+            continue
+        x = np.sort(x)
         n = len(x)
         ccdf = (n - np.arange(n)) / n                      # P(X >= x_i), smallest value 1/n
         p99, p999 = np.quantile(x, [0.99, 0.999])
-        ax.step(x, ccdf, where="post", color=colors[lb], linewidth=1.4,
-                label=f"{lb}: p99 {p99:,.0f} ns, p99.9 {p999:,.0f} ns")
+        pos = x > 0              # the fraction uses every shot; 0 ns points just can't sit on log x
+        zeros = n - int(pos.sum())
+        label = f"{lb}: p99 {p99:,.0f} ns, p99.9 {p999:,.0f} ns"
+        if zeros:
+            label += f" ({zeros / n:.0%} of shots at 0 ns, off the log axis)"
+        if pos.any():
+            ax.step(x[pos], ccdf[pos], where="post", color=colors[lb], linewidth=1.4, label=label)
+            shown.append(x[pos])
+        else:
+            warnings.warn(f"plot_latency_cdf: system {lb!r} has only 0 ns latencies", stacklevel=2)
     ax.set_xscale("log")
     ax.set_yscale("log")
+    ax.set_xlim(*_log_limits(np.concatenate(shown) if shown else [], pad=(0.7, 1.5)))
     ax.set_ylim(top=1.05)
     for level, name in ((1e-2, "p99"), (1e-3, "p99.9")):
         ax.axhline(level, color=AXIS, linewidth=0.8, linestyle=(0, (4, 3)))
@@ -154,7 +356,8 @@ def plot_latency_cdf(
     ax.set_xlabel(f"{column.removesuffix('_ns')} (ns, log scale)")
     ax.set_ylabel("fraction of shots with latency ≥ x")
     _titles(ax, title, tag + (f"  |  {note}" if note else ""))
-    _legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2)
+    if shown:
+        _legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2)
     return _save(fig, out)
 
 
@@ -185,29 +388,35 @@ def plot_max_rate(
     colors = _colors(systems)
     fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 0.32 * len(systems) * nrows + 1.2),
                              sharex=True, squeeze=False)
-    lo = min(rates.loc[rates["rate_hz"] > 0, "rate_hz"].min(), target_hz or np.inf)
-    hi = max(rates["rate_hz"].max(), target_hz or 0)
+    lo, hi = _log_limits(rates["rate_hz"], extra=(target_hz,), pad=(0.5, 4.0),
+                         fallback=(1e3, 1e7))
     for ax, tag in zip(axes.flat, tags):
         _style(ax)
         ax.grid(axis="y", visible=False)
         ax.grid(axis="x", color=GRID, linewidth=0.6)
         d = rates[rates["tag"] == tag].set_index("system").reindex(systems)
+        v_all = d["rate_hz"].to_numpy(dtype=np.float64)
         y = np.arange(len(systems))[::-1]
-        feasible = d["rate_hz"] > 0
-        ax.barh(y[feasible], d["rate_hz"][feasible], height=0.62,
-                color=[colors[s] for s, f in zip(systems, feasible) if f])
-        for yi, v in zip(y, d["rate_hz"]):
-            if not v > 0:
+        drawn = np.isfinite(v_all) & (v_all > 0)
+        ax.barh(y[drawn], v_all[drawn], height=0.62,
+                color=[colors[s] for s, f in zip(systems, drawn) if f])
+        for yi, sname, v in zip(y, systems, v_all):
+            if not np.isfinite(v):
+                warnings.warn(f"plot_max_rate: {tag}/{sname} has no finite rate ({v})",
+                              stacklevel=2)
+                text = "no data"
+            elif v <= 0:
                 text = "never meets the latency budget"
             else:
                 text = f"{v / 1e6:.2f} MHz" if v >= 1e6 else f"{v / 1e3:.0f} kHz"
-            ax.annotate(text, (v if v > 0 else lo / 2, yi), xytext=(3, 0),
+            ax.annotate(text, (v if np.isfinite(v) and v > 0 else lo, yi), xytext=(3, 0),
                         textcoords="offset points", va="center", fontsize=7.5, color=INK_2,
                         bbox={"fc": SURFACE, "ec": "none", "pad": 0.6})
         ax.set_yticks(y, systems)
         ax.set_ylim(-0.7, len(systems) - 0.2)
         ax.set_xscale("log")
-        ax.set_xlim(lo / 2, hi * 4)
+        ax.set_xlim(lo, hi)
+        _no_minor_labels(ax)
         if target_hz:
             ax.axvline(target_hz, color=INK_2, linewidth=0.9, linestyle=(0, (4, 3)))
         ax.set_title(tag, loc="left", fontsize=9, color=INK_2)

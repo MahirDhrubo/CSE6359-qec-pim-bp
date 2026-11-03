@@ -25,6 +25,7 @@ import pandas as pd
 
 from qdec import io
 from qdec.contracts import (
+    CACHE_COLS,
     COSTS_DIR,
     FULL_GRID,
     FUNCTIONAL_COLS,
@@ -78,21 +79,30 @@ def placeholder_figures(service_df: pd.DataFrame, out_dir, skip=()) -> None:
 
 
 def load_inputs(grid, mock: bool):
-    """-> service DataFrame (all tags), {tag: functional DataFrame}, {tag: {system: costs}}."""
+    """-> service DataFrame (all tags), {tag: functional df}, {tag: cache df},
+    {tag: {system: costs}}. A missing cache trace is left out (plot_ler skips that series)."""
     if mock:
-        from qdec.mocks import mock_functional, mock_service
+        from qdec.mocks import mock_cache, mock_functional, mock_service
         service = pd.concat([mock_service(w.tag, n=w.shots) for w in grid], ignore_index=True)
         functional = {w.tag: mock_functional(w.tag, n=w.shots) for w in grid}
+        cache = {w.tag: mock_cache(w.tag, n=w.shots) for w in grid}
         iter_costs = {w.tag: {s.value: dict(MOCK_ITER_COSTS) for s in System} for w in grid}
-        return service, functional, iter_costs
+        return service, functional, cache, iter_costs
     service = pd.concat(
         [io.read_table(COSTS_DIR / f"service_{w.tag}.parquet", SERVICE_COLS) for w in grid],
         ignore_index=True,
     )
     functional = {w.tag: io.read_table(TRACES_DIR / f"functional_{w.tag}.parquet", FUNCTIONAL_COLS)
                   for w in grid}
+    cache = {}
+    for w in grid:
+        path = TRACES_DIR / f"cache_{w.tag}.parquet"
+        if path.exists():
+            cache[w.tag] = io.read_table(path, CACHE_COLS)
+        else:
+            print(f"warning: {path} missing; LER figure has no cache series for {w.tag}")
     iter_costs = json.loads((COSTS_DIR / "iter_costs.json").read_text())
-    return service, functional, iter_costs
+    return service, functional, cache, iter_costs
 
 
 def controller_rows(service_tag: pd.DataFrame, functional_tag: pd.DataFrame) -> pd.DataFrame:
@@ -169,10 +179,13 @@ def main(argv=None) -> None:
     grid = QUICK_GRID if args.grid == "quick" else FULL_GRID
     io.ensure_dirs()
     synthetic_backlog_figure()
-    service, functional, iter_costs = load_inputs(grid, args.mock)
+    service, functional, cache, iter_costs = load_inputs(grid, args.mock)
     out_dir = RESULTS_DIR / "mock" if args.mock else RESULTS_DIR
     note = "MOCK DATA" if args.mock else REAL_NOTE
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    ler_note = "MOCK DATA" if args.mock else f"{len(grid)} workloads, SEED_TEST shots"
+    print(f"wrote {plots.plot_ler(functional, cache, out_dir / 'ler.png', note=ler_note)}")
 
     summary_table(service).to_csv(out_dir / "summary.csv", index=False)
     print(f"wrote {out_dir / 'summary.csv'}")
@@ -191,7 +204,8 @@ def main(argv=None) -> None:
             MOCK_PERIOD_NS, title="Backlog per system", note=f"MOCK DATA, {tag}",
         )
         print(f"wrote {path} (MOCK)")
-        done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate}
+        done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
+                plots.plot_ler}
         placeholder_figures(service, out_dir, skip=done)
 
 
