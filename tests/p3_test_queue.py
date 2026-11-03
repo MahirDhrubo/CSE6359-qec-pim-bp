@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from qdec.queue.sim import simulate
+from qdec.queue.sim import max_sustainable_rate, simulate
 from qdec.queue.synthetic import same_mean_lognormal
 
 T = 1000.0
@@ -64,7 +64,7 @@ def test_bad_inputs_rejected():
         simulate(np.array([]), T)
     with pytest.raises(ValueError):
         simulate(np.ones(5), 0.0)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="rows"):
         simulate(np.ones(5), T, controller=object())
 
 
@@ -83,3 +83,42 @@ def test_heavy_tail_builds_deeper_backlog_at_same_mean():
             for k, g in df.groupby("system")}
     assert peak["light"] <= 10
     assert peak["heavy"] > 10 * peak["light"]
+
+
+# ---------------------------------------------------------------- max_sustainable_rate
+
+
+def test_rate_for_constant_service_is_one_over_service():
+    assert max_sustainable_rate(np.full(1000, 500.0), tol=1e-3) == pytest.approx(2e6, rel=2e-3)
+
+
+def test_stability_rate_is_one_over_mean_service():
+    s = np.random.default_rng(1).lognormal(np.log(400), 1.0, 20_000)
+    assert max_sustainable_rate(s, tol=1e-3) == pytest.approx(1e9 / s.mean(), rel=2e-3)
+
+
+def test_latency_budget_constant_service():
+    s = np.full(1000, 500.0)
+    assert max_sustainable_rate(s, latency_budget_ns=500.0, tol=1e-3) == pytest.approx(2e6, rel=2e-3)
+    assert max_sustainable_rate(s, latency_budget_ns=499.0) == 0.0     # one decode alone too slow
+
+
+def test_latency_budget_penalizes_heavy_tail_at_same_mean():
+    df = same_mean_lognormal(500.0, {"light": 0.3, "heavy": 1.5}, 20_000, seed=0)
+    s = {k: g.sort_values("shot_id")["latency_ns"].to_numpy() for k, g in df.groupby("system")}
+    stab = {k: max_sustainable_rate(v) for k, v in s.items()}
+    assert stab["light"] == pytest.approx(stab["heavy"], rel=0.02)    # same mean -> same rate
+    tail = {k: max_sustainable_rate(v, latency_budget_ns=10_000.0) for k, v in s.items()}
+    assert tail["light"] > 1.5 * tail["heavy"]
+    assert tail["heavy"] < stab["heavy"]
+
+
+def test_tighter_budget_never_raises_rate():
+    s = np.random.default_rng(2).lognormal(np.log(400), 1.0, 5000)
+    rates = [max_sustainable_rate(s, latency_budget_ns=b) for b in (20_000, 10_000, 5_000)]
+    assert rates[0] >= rates[1] >= rates[2]
+
+
+def test_rate_rejects_all_zero_service():
+    with pytest.raises(ValueError):
+        max_sustainable_rate(np.zeros(10))

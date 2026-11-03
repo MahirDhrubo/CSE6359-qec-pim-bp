@@ -43,6 +43,24 @@ def _style(ax) -> None:
     ax.yaxis.label.set_color(INK_2)
 
 
+def _titles(ax, title: str, sub: str) -> None:
+    ax.set_title(f"{title}\n", loc="left", fontsize=12, color=INK)
+    ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=9, color=INK_2)
+
+
+def _legend(ax, **kw) -> None:
+    leg = ax.legend(fontsize=8, frameon=False, **kw)
+    for t in leg.get_texts():
+        t.set_color(INK_2)
+
+
+def _one_tag(df: pd.DataFrame) -> str:
+    tags = df["tag"].unique() if "tag" in df else ["(synthetic)"]
+    if len(tags) != 1:
+        raise ValueError(f"expected rows for one tag, got {len(tags)}; filter by tag first")
+    return str(tags[0])
+
+
 def _save(fig, out: Path) -> Path:
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -86,12 +104,8 @@ def plot_backlog_explosion(
     ax.set_ylabel("queue depth (windows)")
     ax.set_ylim(bottom=0)
     ax.margins(x=0.01)
-    sub = f"round period T = {round_period_ns:g} ns" + (f"  |  {note}" if note else "")
-    ax.set_title(f"{title}\n", loc="left", fontsize=12, color=INK)
-    ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=9, color=INK_2)
-    leg = ax.legend(loc="upper left", fontsize=8, frameon=False)
-    for t in leg.get_texts():
-        t.set_color(INK_2)
+    _titles(ax, title, f"round period T = {round_period_ns:g} ns" + (f"  |  {note}" if note else ""))
+    _legend(ax, loc="upper left")
     return _save(fig, out)
 
 
@@ -102,9 +116,46 @@ def plot_ler(functional_dfs: dict[str, pd.DataFrame], cache_dfs: dict[str, pd.Da
     raise NotImplementedError
 
 
-def plot_latency_cdf(service_df: pd.DataFrame, out: Path) -> Path:
-    """Latency CDF per System (log x), p99 / p99.9 marked. Inputs: SERVICE_COLS. Owner: P3."""
-    raise NotImplementedError
+def plot_latency_cdf(
+    service_df: pd.DataFrame,
+    out: Path,
+    column: str = "latency_ns",
+    note: str = "",
+    title: str = "Decode latency tail per system",
+) -> Path:
+    """Latency distribution per System drawn as the exceedance curve P(latency >= x) = 1 - CDF
+    on log-log axes, so p99 and p99.9 are the horizontal levels 1e-2 and 1e-3.
+
+    Inputs:  SERVICE_COLS rows for ONE tag (column = latency_ns, or a queueing latency column);
+             note = subtitle text, e.g. "MODELED except bposd_cpu" or "MOCK DATA".
+    Outputs: PNG at `out`. Legend entries carry each system's p99 and p99.9.
+    Owner:   P3
+    """
+    tag = _one_tag(service_df)
+    labels = list(dict.fromkeys(service_df["system"]))
+    colors = _colors(labels)
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    _style(ax)
+    ax.grid(axis="x", color=GRID, linewidth=0.6)
+    for lb in labels:
+        x = np.sort(service_df.loc[service_df["system"] == lb, column].to_numpy())
+        n = len(x)
+        ccdf = (n - np.arange(n)) / n                      # P(X >= x_i), smallest value 1/n
+        p99, p999 = np.quantile(x, [0.99, 0.999])
+        ax.step(x, ccdf, where="post", color=colors[lb], linewidth=1.4,
+                label=f"{lb}: p99 {p99:,.0f} ns, p99.9 {p999:,.0f} ns")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylim(top=1.05)
+    for level, name in ((1e-2, "p99"), (1e-3, "p99.9")):
+        ax.axhline(level, color=AXIS, linewidth=0.8, linestyle=(0, (4, 3)))
+        ax.annotate(name, (1, level), xycoords=("axes fraction", "data"), xytext=(4, 0),
+                    textcoords="offset points", va="center", fontsize=9, color=MUTED)
+    ax.set_xlabel(f"{column.removesuffix('_ns')} (ns, log scale)")
+    ax.set_ylabel("fraction of shots with latency ≥ x")
+    _titles(ax, title, tag + (f"  |  {note}" if note else ""))
+    _legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2)
+    return _save(fig, out)
 
 
 def plot_backlog_over_time(sim_results: dict, out: Path) -> Path:
@@ -112,10 +163,63 @@ def plot_backlog_over_time(sim_results: dict, out: Path) -> Path:
     raise NotImplementedError
 
 
-def plot_max_rate(rates: pd.DataFrame, out: Path) -> Path:
-    """Max sustainable round rate per System and workload (from queue.sim.max_sustainable_rate).
-    Owner: P3."""
-    raise NotImplementedError
+def plot_max_rate(
+    rates: pd.DataFrame,
+    out: Path,
+    target_hz: float | None = 1e6,
+    note: str = "",
+    title: str = "Max sustainable syndrome-round rate",
+) -> Path:
+    """Max sustainable round rate per System, one panel per workload tag.
+
+    Inputs:  rates with columns tag, system, rate_hz (from queue.sim.max_sustainable_rate);
+             target_hz = reference line (default 1 MHz = 1 us rounds, superconducting-qubit
+             scale; None to omit); note = subtitle text (state the criterion and MODELED/MOCK).
+    Outputs: PNG at `out`. Bars on a log x-axis, each labelled with its rate.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(rates["tag"]))
+    ncols = 1 if len(tags) == 1 else 2
+    nrows = -(-len(tags) // ncols)
+    systems = list(dict.fromkeys(rates["system"]))
+    colors = _colors(systems)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 0.32 * len(systems) * nrows + 1.2),
+                             sharex=True, squeeze=False)
+    lo = min(rates.loc[rates["rate_hz"] > 0, "rate_hz"].min(), target_hz or np.inf)
+    hi = max(rates["rate_hz"].max(), target_hz or 0)
+    for ax, tag in zip(axes.flat, tags):
+        _style(ax)
+        ax.grid(axis="y", visible=False)
+        ax.grid(axis="x", color=GRID, linewidth=0.6)
+        d = rates[rates["tag"] == tag].set_index("system").reindex(systems)
+        y = np.arange(len(systems))[::-1]
+        feasible = d["rate_hz"] > 0
+        ax.barh(y[feasible], d["rate_hz"][feasible], height=0.62,
+                color=[colors[s] for s, f in zip(systems, feasible) if f])
+        for yi, v in zip(y, d["rate_hz"]):
+            if not v > 0:
+                text = "never meets the latency budget"
+            else:
+                text = f"{v / 1e6:.2f} MHz" if v >= 1e6 else f"{v / 1e3:.0f} kHz"
+            ax.annotate(text, (v if v > 0 else lo / 2, yi), xytext=(3, 0),
+                        textcoords="offset points", va="center", fontsize=7.5, color=INK_2,
+                        bbox={"fc": SURFACE, "ec": "none", "pad": 0.6})
+        ax.set_yticks(y, systems)
+        ax.set_ylim(-0.7, len(systems) - 0.2)
+        ax.set_xscale("log")
+        ax.set_xlim(lo / 2, hi * 4)
+        if target_hz:
+            ax.axvline(target_hz, color=INK_2, linewidth=0.9, linestyle=(0, (4, 3)))
+        ax.set_title(tag, loc="left", fontsize=9, color=INK_2)
+    for ax in axes.flat[len(tags):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("round rate (Hz, log scale)")
+    sub = (f"dashed line: {target_hz / 1e6:g} MHz target" if target_hz else "") + (
+        f"  |  {note}" if note else "")
+    fig.suptitle(f"{title}\n{sub}", x=0.02, ha="left", fontsize=11, color=INK)
+    fig.tight_layout()
+    return _save(fig, out)
 
 
 def plot_hit_rate(cache_dfs: dict[str, pd.DataFrame], out: Path) -> Path:
