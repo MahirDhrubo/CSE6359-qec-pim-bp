@@ -27,6 +27,7 @@ from qdec.workload.baselines import (
     measurement_info,
 )
 from qdec.workload.circuits import make_circuit
+from qdec.workload.selection import select_workloads
 from qdec.workload.stats import cis_overlap, latency_percentiles, wilson_ci
 
 
@@ -83,9 +84,15 @@ def main(argv=None) -> list[dict]:
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
     ap.add_argument("--all", action="store_true", help="every workload in the grid, not just d5 p1e-3")
     ap.add_argument("--shots", type=int, default=None, help="use only the first N shots")
+    ap.add_argument("--code", choices=("surface", "gross"))
+    ap.add_argument("--max-distance", type=int, help="surface distance cap; retains gross")
     args = ap.parse_args(argv)
 
     grid = QUICK_GRID if args.grid == "quick" else FULL_GRID
+    try:
+        grid = select_workloads(grid, code=args.code, max_distance=args.max_distance, shots=args.shots)
+    except ValueError as e:
+        ap.error(str(e))
     if not args.all:
         grid = [w for w in grid if w.code == "surface" and w.distance == 5 and w.p == 1e-3]
     io.ensure_dirs()

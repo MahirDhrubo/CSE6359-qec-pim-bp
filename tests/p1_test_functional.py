@@ -99,6 +99,13 @@ def test_real_script_metadata_and_separate_destination(small, monkeypatch):
     assert meta["output_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert meta["input_sha256"] and meta["source_sha256"]
     assert meta["versions"]["stim"]
+    before = path.read_bytes()
+    mod.main(["--output-dir", "validation", "--resume"])
+    assert path.read_bytes() == before
+    meta["kind"] = "MOCK"
+    path.with_suffix(".json").write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="stale checkpoint"):
+        mod.main(["--output-dir", "validation", "--resume"])
     with pytest.raises(SystemExit):
         mod.main(["--d", "5"])
 
