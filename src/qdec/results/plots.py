@@ -354,9 +354,47 @@ def plot_latency_cdf(
     return _save(fig, out)
 
 
-def plot_backlog_over_time(sim_results: dict, out: Path) -> Path:
-    """Queue depth vs time per System from queue.sim.SimResult. Owner: P3."""
-    raise NotImplementedError
+def plot_backlog_over_time(
+    sim_results: dict,
+    out: Path,
+    round_period_ns: float | None = None,
+    note: str = "",
+    title: str = "Decode backlog over time",
+) -> Path:
+    """Queue depth vs decode window per System, from queue.sim.SimResult (FULL may include the
+    controller). Symlog y-axis: linear below 1 window, log above, so a stable system's small
+    queue stays visible next to an unstable one's growing backlog.
+
+    Inputs:  {system: SimResult}; round_period_ns for the subtitle (optional).
+    Outputs: PNG at `out`. Legend: peak depth, p99.9 latency (queueing + service), UNSTABLE flag.
+    Owner:   P3
+    """
+    labels = list(sim_results)
+    colors = _colors(labels)
+    fig, ax = plt.subplots(figsize=(8.5, 4.4))
+    _style(ax)
+    for lb in labels:
+        r = sim_results[lb]
+        depth = _clean(r.queue_depth, f"plot_backlog_over_time: {lb}")
+        lat = _clean(r.latency_ns, f"plot_backlog_over_time: {lb} latency")
+        if len(depth) == 0 or len(lat) == 0:
+            warnings.warn(f"plot_backlog_over_time: skipping system {lb!r}, no data", stacklevel=2)
+            continue
+        ax.step(np.arange(len(depth)), depth, where="post", color=colors[lb], linewidth=1.2,
+                label=f"{lb}: peak {int(depth.max()):,} windows, "
+                      f"p99.9 latency {np.quantile(lat, 0.999) / 1e3:,.1f} us"
+                      f"{'' if r.stable else ' (UNSTABLE)'}")
+    ax.set_yscale("symlog", linthresh=1)
+    ax.set_ylim(bottom=0)
+    ax.margins(x=0.01)
+    ax.set_xlabel("decode window (one per syndrome round)")
+    ax.set_ylabel("queue depth (windows)")
+    sub = (f"round period {round_period_ns:,.0f} ns" if round_period_ns else "") + (
+        f"  |  {note}" if note else "")
+    _titles(ax, title, sub)
+    if ax.lines:
+        _legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=1)
+    return _save(fig, out)
 
 
 def plot_max_rate(

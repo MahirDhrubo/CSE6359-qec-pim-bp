@@ -126,43 +126,62 @@ def controller_rows(service_tag: pd.DataFrame, functional_tag: pd.DataFrame) -> 
     return rows.reset_index(drop=True)
 
 
-def rate_table(service, functional, iter_costs, budget_ns: float, max_iters_arg) -> pd.DataFrame:
-    out = []
-    for tag, svc in service.groupby("tag", sort=False):
-        max_iters = max_iters_arg or int(functional[tag]["bp_iters"].max())
-        rows = controller_rows(svc, functional[tag])
-        costs = iter_costs.get(tag, {}).get(System.FULL.value)
-        if costs is None or rows.empty:
+def system_inputs(tag, svc, functional_tag, iter_costs, max_iters_arg, verbose=False) -> dict:
+    """{system: (service_ns, simulate kwargs)} for one workload. FULL runs the backlog
+    controller when iter_costs has the tag; its service base is then re-priced from iter_costs
+    (uncapped), so controller on/off compare on one cost model (see the printed gap)."""
+    out = {system: (g.sort_values("shot_id")["latency_ns"].to_numpy(), {})
+           for system, g in svc.groupby("system", sort=False)}
+    rows = controller_rows(svc, functional_tag)
+    costs = iter_costs.get(tag, {}).get(System.FULL.value)
+    if costs is None or rows.empty:
+        if verbose:
             print(f"warning: {tag}: no iter_costs or FULL rows; full is simulated without "
                   f"the controller")
-            for system, g in svc.groupby("system", sort=False):
-                s = g.sort_values("shot_id")["latency_ns"].to_numpy()
-                out.append({"tag": tag, "system": system,
-                            "rate_stable_hz": max_sustainable_rate(s),
-                            "rate_hz": max_sustainable_rate(s, latency_budget_ns=budget_ns)})
-            continue
+        return out
+    max_iters = max_iters_arg or int(functional_tag["bp_iters"].max())
+    floor = best_budget(rows, costs, max_iters)
+    if verbose:
         gap = uncapped_mismatch(rows["latency_ns"], rows, costs, max_iters)
-        floor = best_budget(rows, costs, max_iters)
         print(f"{tag}: max_iters={max_iters}{'' if max_iters_arg else ' (inferred)'}, "
               f"controller floor b*={floor}, "
               f"service-table vs iter_costs median gap for full = {gap:.0%}")
-        ctl = BacklogController(max_iters, min_iters=floor)
-        for system, g in svc.groupby("system", sort=False):
-            s = g.sort_values("shot_id")["latency_ns"].to_numpy()
-            kw = {}
-            if system == System.FULL.value:
-                # the controller re-prices from iter_costs, so its uncapped base must come from
-                # the same model (see the gap printed above)
-                s = ctl.reprice_all(rows, max_iters, costs)
-                kw = {"controller": ctl, "rows": rows, "iter_costs": costs}
+    ctl = BacklogController(max_iters, min_iters=floor)
+    out[System.FULL.value] = (ctl.reprice_all(rows, max_iters, costs),
+                              {"controller": ctl, "rows": rows, "iter_costs": costs})
+    return out
+
+
+def rate_table(service, functional, iter_costs, budget_ns: float, max_iters_arg) -> pd.DataFrame:
+    out = []
+    for tag, svc in service.groupby("tag", sort=False):
+        inputs = system_inputs(tag, svc, functional[tag], iter_costs, max_iters_arg, verbose=True)
+        for system, (s, kw) in inputs.items():
             out.append({
                 "tag": tag, "system": system,
                 "rate_stable_hz": max_sustainable_rate(s, **kw),
                 "rate_hz": max_sustainable_rate(s, latency_budget_ns=budget_ns, **kw),
             })
-            if system == System.FULL.value:
+            if system == System.FULL.value and kw:
                 compare_full(tag, svc, s, kw, out[-1]["rate_hz"], out, budget_ns)
     return pd.DataFrame(out)
+
+
+def backlog_figures(service, functional, iter_costs, max_iters_arg, out_dir, note) -> None:
+    """Queue depth over time per workload, at the round period where PIM_CACHE (or, without it,
+    the fastest system) runs at 90% utilization: fast systems keep up there, slow ones don't."""
+    for tag, svc in service.groupby("tag", sort=False):
+        inputs = system_inputs(tag, svc, functional[tag], iter_costs, max_iters_arg)
+        ref = inputs.get(System.PIM_CACHE.value) or min(inputs.values(), key=lambda v: v[0].mean())
+        period = ref[0].mean() / 0.9
+        if not period > 0:
+            print(f"warning: {tag}: reference mean service is 0; no backlog figure")
+            continue
+        sims = {system: simulate(s, period, **kw) for system, (s, kw) in inputs.items()}
+        path = plots.plot_backlog_over_time(
+            sims, out_dir / f"backlog_over_time_{tag}.png", period,
+            note=f"{tag}  |  period = PIM_CACHE mean / 0.9  |  {'MOCK' if 'MOCK' in note else 'MODELED'}")
+        print(f"wrote {path}")
 
 
 def compare_full(tag, svc, full_s, kw, full_rate, out, budget_ns) -> None:
@@ -218,6 +237,7 @@ def main(argv=None) -> None:
     rates.to_csv(out_dir / "max_rate.csv", index=False)
     crit = f"p99.9 latency <= {args.latency_budget_ns / 1e3:g} us, full uses the controller"
     print(f"wrote {plots.plot_max_rate(rates, out_dir / 'max_rate.png', note=f'{crit}  |  {note}')}")
+    backlog_figures(service, functional, iter_costs, args.max_iters, out_dir, note)
 
     if args.mock:
         tag = grid[0].tag
@@ -227,7 +247,8 @@ def main(argv=None) -> None:
         )
         print(f"wrote {path} (MOCK)")
         done = {plots.plot_backlog_explosion, plots.plot_latency_cdf, plots.plot_max_rate,
-                plots.plot_ler, plots.plot_hit_rate, plots.plot_bytes_energy}
+                plots.plot_ler, plots.plot_hit_rate, plots.plot_bytes_energy,
+                plots.plot_backlog_over_time}
         placeholder_figures(service, out_dir, skip=done)
 
 
