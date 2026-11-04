@@ -116,12 +116,53 @@ cpu_op:
   status: VERIFY
   note: "Confirm the ~70 pJ instruction-overhead figure on the Horowitz slide."
 
+# ---------------------------------------------------------------- published-number baselines
+# status PUBLISHED = taken from the cited paper's own hardware/simulator, NOT modeled by us.
+# Both are applied per BP iteration to OUR quantized min-sum iteration trace (same shots, same
+# iteration counts, same CPU OSD fallback as every other system), so only the iteration time
+# differs between systems. energy_pj .nan = not reported by the paper (NaN in service rows).
+
+relay_fpga_iter:
+  latency_ns: 24.0
+  energy_pj: 1392600.0
+  unit: "per BP iteration; energy = 24 ns x 58.025 W total FPGA power"
+  source: >-
+    Maurer et al., "Real-time decoding of the gross code memory with FPGAs," arXiv:2510.21600
+    (2025): Relay-BP on an AMD VU19P, 2 cycles of a 12 ns decoder clock per flooding iteration
+    = 24 ns; 58.025 W total power after place and route (Fig. 5)
+  status: PUBLISHED
+  note: >-
+    Gross-code X decoder. Reused unchanged for the surface code (assumes a fully parallel design
+    of that size fits). Relay-BP's own iteration counts (about 20 on average at p = 1e-3 per the
+    paper) are not used; ours are.
+
+nearmem_dpu_iter:
+  latency_ns: 174600.0
+  energy_pj: .nan
+  unit: "per BP iteration (X + Z, serialized) = 0.873 ms / 5 iterations"
+  source: >-
+    Seo, Han, Hour, Kim, "High-Throughput Normalized Min-Sum Belief Propagation Decoding for
+    Quantum LDPC Codes with Near-Memory Processing," arXiv:2608.27901 (2026): maximum sampled
+    serialized X+Z DPU compute latency about 0.873 ms at five iterations (uPIMulator, UPMEM DPUs,
+    11 tasklets per DPU)
+  status: PUBLISHED
+  note: >-
+    Simulated, not measured on hardware. Data-qubit noise graph of [[144,12,12]] (much smaller
+    than our circuit-level graphs), so applying it unscaled is optimistic for the DPU. A maximum,
+    not a mean. Energy not reported.
+
 osd_ns:
   latency_ns: 100000.0
   energy_pj: 1.0e+9
-  unit: "per OSD call on the CPU"
+  unit: "per OSD call on the CPU (FALLBACK only; see source)"
   source: >-
-    PLACEHOLDER pending P1's measured ldpc BP+OSD time. Energy = latency * 10 W
-    (assumed single-core power)
+    Per workload the service tables use a MEASURED-derived value instead: the median of paired
+    per-shot ldpc timings, t(BpOsdDecoder) - t(BpDecoder) on the same non-converged TEST
+    syndrome, with P1's bposd_cpu settings (scripts/p2_measure_osd.py -> data/costs/osd_<tag>.json).
+    This constant is an ASSUMED fallback used only when no measurement exists for a tag.
+    Energy = time * 10 W (cpu_core_ns)
   status: VERIFY
-  note: "Replace latency_ns with P1's measured median OSD time at the Day 2 merge."
+  note: >-
+    Measured on Intel x86 (2026-11-03), one thread: about 3.3 ms at d5 and 32 ms at d7, so this
+    fallback is far too low for those graphs. The median ignores OSD timing tails; report the
+    osd_<tag>.json p99 alongside.

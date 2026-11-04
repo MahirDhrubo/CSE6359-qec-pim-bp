@@ -3,7 +3,8 @@
 
 Writes COSTS_DIR/service_<tag>.parquet (SERVICE_COLS) and COSTS_DIR/iter_costs.json.
 Reads TRACES_DIR/functional_<tag>.parquet (P1), cache_<tag>.parquet + .json (P2) and, when present,
-P1's MEASURED TRACES_DIR/bposd_latency_<tag>.npz for the bposd_cpu rows.
+P1's MEASURED TRACES_DIR/bposd_latency_<tag>.npz for the bposd_cpu rows and P2's
+COSTS_DIR/osd_<tag>.json (scripts/p2_measure_osd.py) for the OSD fallback time.
 With --mock, writes qdec.mocks.mock_service tables and placeholder iter_costs (MOCK numbers).
 Usage: python scripts/p2_build_costs.py --grid quick|full [--mock]
 """
@@ -43,6 +44,16 @@ def bposd_latency(tag: str, n: int):
     return z["latency_ns"]
 
 
+def measured_osd_ns(tag: str):
+    """Median paired OSD time from scripts/p2_measure_osd.py, or None (yaml fallback)."""
+    path = COSTS_DIR / f"osd_{tag}.json"
+    if not path.exists():
+        print(f"  {tag}: no {path.name}; osd_ns = op_costs.yaml fallback (ASSUMED), "
+              f"run scripts/p2_measure_osd.py")
+        return None
+    return json.loads(path.read_text())["osd_ns"]["p50"]
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
@@ -64,6 +75,7 @@ def main(argv=None) -> None:
         print(f"wrote {path} (MOCK)")
         return
 
+    from qdec.cache.cam import CACHEABLE_CODES
     from qdec.costmodel.service import (
         build_service_table,
         iter_cost_entries,
@@ -72,19 +84,31 @@ def main(argv=None) -> None:
     )
 
     costs = load_costs()
-    entries = {}
+    entries, missing = {}, []
     for w in grid:
         gname = f"{w.code}_d{w.distance}_p{w.p:g}"
-        stats = json.loads((GRAPHS_DIR / f"{gname}.json").read_text())
-        fdf = io.read_table(TRACES_DIR / f"functional_{w.tag}.parquet", FUNCTIONAL_COLS)
-        cdf = io.read_table(TRACES_DIR / f"cache_{w.tag}.parquet", CACHE_COLS)
-        cam = json.loads((TRACES_DIR / f"cache_{w.tag}.json").read_text())
-        kw = {"cam_entries": cam["cam_entries"], "key_bits": cam["key_bits"]}
+        try:
+            stats = json.loads((GRAPHS_DIR / f"{gname}.json").read_text())
+            fdf = io.read_table(TRACES_DIR / f"functional_{w.tag}.parquet", FUNCTIONAL_COLS)
+            cdf, kw = None, {}
+            if w.code in CACHEABLE_CODES:
+                cdf = io.read_table(TRACES_DIR / f"cache_{w.tag}.parquet", CACHE_COLS)
+                cam = json.loads((TRACES_DIR / f"cache_{w.tag}.json").read_text())
+                kw = {"cam_entries": cam["cam_entries"], "key_bits": cam["key_bits"]}
+        except FileNotFoundError as e:
+            missing.append(f"{w.tag} ({e.filename})")
+            continue
+        kw["osd_ns"] = measured_osd_ns(w.tag)
         sdf = build_service_table(fdf, cdf, stats, costs,
                                   bposd_latency_ns=bposd_latency(w.tag, len(fdf)), **kw)
-        print(f"wrote {io.write_table(sdf, SERVICE_COLS, COSTS_DIR / f'service_{w.tag}.parquet')}")
+        print(f"wrote {io.write_table(sdf, SERVICE_COLS, COSTS_DIR / f'service_{w.tag}.parquet')}"
+              f"  ({sdf['system'].nunique()} systems)", flush=True)
         entries[w.tag] = iter_cost_entries(fdf, cdf, stats, costs, **kw)
-    print(f"wrote {write_iter_costs(entries, COSTS_DIR / 'iter_costs.json')}")
+    if entries:
+        print(f"wrote {write_iter_costs(entries, COSTS_DIR / 'iter_costs.json')}  ({len(entries)} tags)")
+    if missing:
+        print(f"p2_build_costs: SKIPPED {len(missing)} workload(s) with missing inputs "
+              f"(run `make data functional cache`): " + "; ".join(missing))
 
 
 if __name__ == "__main__":

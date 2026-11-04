@@ -101,3 +101,16 @@ def is_isolated(cluster: Cluster, all_clusters: list[Cluster], boundary: Boundar
     theirs = boundary.grid(np.array(others))
     gap = np.abs(mine[:, None, :] - theirs[None, :, :]).max(axis=2)
     return bool(gap.min() > boundary.reach)
+
+
+def isolation_flags(clusters: list[Cluster], boundary: Boundary) -> list[bool]:
+    """is_isolated for every cluster of one shot at once (one pairwise distance matrix)."""
+    if len(clusters) <= 1:
+        return [True] * len(clusters)
+    g = boundary.grid(np.concatenate([c.coords for c in clusters]))
+    label = np.repeat(np.arange(len(clusters)), [len(c.det_ids) for c in clusters])
+    near = np.abs(g[:, None, :] - g[None, :, :]).max(axis=2) <= boundary.reach
+    near &= label[:, None] != label[None, :]
+    bad = np.zeros(len(clusters), dtype=bool)
+    np.logical_or.at(bad, label, near.any(axis=1))
+    return (~bad).tolist()

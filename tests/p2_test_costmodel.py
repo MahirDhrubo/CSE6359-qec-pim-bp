@@ -1,5 +1,5 @@
 # OWNER: P2
-"""Day 2: per-iteration cost models, service tables and iter_costs.json on mock traces."""
+"""Day 2-3: per-iteration cost models, service tables and iter_costs.json on mock traces."""
 import json
 
 import numpy as np
@@ -19,7 +19,8 @@ from qdec.mocks import mock_cache, mock_functional
 TAG = "surface_d5_p0.001_s2000"
 D5 = {"n_vars": 1677, "n_checks": 120, "n_edges": 5004, "max_var_deg": 4, "max_check_deg": 80}
 D7 = {"n_vars": 5471, "n_checks": 336, "n_edges": 17156, "max_var_deg": 4, "max_check_deg": 80}
-BP_SYSTEMS = {System.BP_CPU_CONV.value, System.PIM_NOCACHE.value}
+PUBLISHED = {System.NEARMEM_DPU.value, System.RELAY_FPGA.value}
+BP_SYSTEMS = {System.BP_CPU_CONV.value, System.PIM_NOCACHE.value} | PUBLISHED
 CACHE_SYSTEMS = {System.PIM_CACHE.value, System.FULL.value}
 
 
@@ -75,7 +76,10 @@ def test_service_table_schema_and_rows(traces, costs):
     assert set(s["system"]) == BP_SYSTEMS | CACHE_SYSTEMS
     assert (s.groupby("system").size() == len(f)).all()
     assert set(s["path"]) <= {"cache", "bp", "bp+osd"}
-    assert (s["latency_ns"] >= 0).all() and (s["energy_nj"] >= 0).all()
+    assert (s["latency_ns"] >= 0).all()
+    e = s["energy_nj"]
+    assert (e.dropna() >= 0).all()
+    assert set(s.loc[e.isna(), "system"]) == {System.NEARMEM_DPU.value}
 
 
 def test_bp_latency_matches_contract_repricing_formula(traces, costs):
@@ -115,6 +119,61 @@ def test_bposd_rows_use_measured_latency(traces, costs):
     assert rows["bytes_moved"].isna().all()
     with pytest.raises(ValueError):
         build_service_table(f, c, D5, costs, bposd_latency_ns=lat[:-1])
+
+
+def test_all_seven_systems_with_bposd(traces, costs):
+    f, c = traces
+    s = build_service_table(f, c, D5, costs, bposd_latency_ns=np.ones(len(f)))
+    assert set(s["system"]) == {sys.value for sys in System}
+
+
+def test_published_baselines_use_paper_iteration_time(traces, costs):
+    f, c = traces
+    s = build_service_table(f, c, D5, costs)
+    for system, op in ((System.RELAY_FPGA, "relay_fpga_iter"), (System.NEARMEM_DPU, "nearmem_dpu_iter")):
+        rows = s[s["system"] == system.value].sort_values("shot_id")
+        want = f["bp_iters"] * costs[op]["latency_ns"] + f["osd_ran"] * costs["osd_ns"]["latency_ns"]
+        np.testing.assert_allclose(rows["latency_ns"], want.to_numpy())
+        assert rows["bytes_moved"].isna().all()           # papers report no traffic
+    dpu = s[s["system"] == System.NEARMEM_DPU.value]
+    relay = s[s["system"] == System.RELAY_FPGA.value]
+    assert dpu["energy_nj"].isna().all()                  # not reported -> NaN, never invented
+    assert relay["energy_nj"].notna().all()
+
+
+def test_no_cache_code_gets_full_but_not_pim_cache(traces, costs):
+    """Gross-code fallback: FULL = PIM-BP rows (controller applied by P3), no PIM_CACHE."""
+    f, _ = traces
+    s = build_service_table(f, None, D5, costs)
+    assert System.PIM_CACHE.value not in set(s["system"])
+    full = s[s["system"] == System.FULL.value].sort_values("shot_id")
+    nocache = s[s["system"] == System.PIM_NOCACHE.value].sort_values("shot_id")
+    np.testing.assert_array_equal(full["latency_ns"], nocache["latency_ns"])
+    assert (full["path"] != "cache").all()
+    prices = iter_cost_entries(f, None, D5, costs)
+    assert System.PIM_CACHE.value not in prices
+    assert prices[System.FULL.value] == prices[System.PIM_NOCACHE.value]
+
+
+def test_measured_osd_overrides_yaml_fallback(traces, costs):
+    f, c = traces
+    measured = 3.3e6
+    s = build_service_table(f, c, D5, costs, osd_ns=measured)
+    prices = iter_cost_entries(f, c, D5, costs, osd_ns=measured)
+    assert all(p["osd_ns"] == measured for p in prices.values())
+    base = build_service_table(f, c, D5, costs)
+    osd = f.sort_values("shot_id")["osd_ran"].to_numpy()
+    for system in BP_SYSTEMS:
+        a = s[s["system"] == system].sort_values("shot_id")
+        b = base[base["system"] == system].sort_values("shot_id")
+        extra = measured - costs["osd_ns"]["latency_ns"]
+        np.testing.assert_allclose(a["latency_ns"] - b["latency_ns"], osd * extra)
+    # OSD energy = OSD time on one busy core at cpu_core_ns power (nJ per ns below)
+    pim_rows = s[s["system"] == System.PIM_NOCACHE.value].sort_values("shot_id")
+    pim_base = base[base["system"] == System.PIM_NOCACHE.value].sort_values("shot_id")
+    core = costs["cpu_core_ns"]["energy_pj"] / costs["cpu_core_ns"]["latency_ns"] / 1e3
+    np.testing.assert_allclose(pim_rows["energy_nj"].to_numpy() - pim_base["energy_nj"].to_numpy(),
+                               osd * (measured - costs["osd_ns"]["latency_ns"]) * core)
 
 
 def test_misaligned_traces_rejected(traces, costs):
