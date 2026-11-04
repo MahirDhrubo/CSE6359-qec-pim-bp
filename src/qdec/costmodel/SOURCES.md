@@ -28,7 +28,7 @@ from the source and still to be checked against the cited table; CHECKED = read 
 ## Measured on our CPU
 
 - **bposd_cpu**: ldpc BP+OSD wall clock per shot, one thread (P1, `p1_check_baselines.py`, TRACES_DIR/bposd_latency_<tag>.npz/.json).
-- **OSD fallback** (every BP system): median of paired per-shot ldpc timings, t(BP+OSD) - t(BP) on the same non-converged syndrome (P2, `costmodel/osd_timing.py`, COSTS_DIR/osd_<tag>.json). The `osd_ns` row below is only the fallback constant.
+- **OSD fallback** (every BP system): median of paired per-shot ldpc timings, t(BP+OSD) - t(BP) on the same non-converged syndrome (P2, `costmodel/osd_timing.py`, COSTS_DIR/osd_<tag>.json), rescaled to the CPU that timed bposd_cpu by the median ratio of P1's BP+OSD time to ours on the same timed shots (`cpu_calibration` in that file). The `osd_ns` row below is only the fallback constant.
 - CPU energy for both = time x 10 W (`cpu_core_ns`, assumed).
 
 ## Modeling assumptions

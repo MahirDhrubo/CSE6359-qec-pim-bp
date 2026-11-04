@@ -6,7 +6,12 @@ For a syndrome where BP does not converge, time ldpc's BpOsdDecoder (BP + OSD) a
 and take OSD = t(BP+OSD) - t(BP). Pairing on one syndrome gives a conditional per-call estimate;
 it is not the subtraction of medians from different shot populations that P1's DAY2_HANDOFF
 rules out. Single thread; the numbers describe this CPU and ldpc's OSD-CS, not hardware PIM.
+
+The payload keeps the timed shot ids and their BP+OSD times, so cpu_ratio() can rescale the result
+to the CPU that timed P1's bposd_cpu baseline (same shots, same settings): the OSD fallback inside
+every BP system is then priced on the same CPU as the BP+OSD baseline it is compared with.
 """
+import hashlib
 import json
 import platform
 import time
@@ -25,6 +30,7 @@ from qdec.contracts import COSTS_DIR, GRAPHS_DIR, SEED_TEST, SHOTS_DIR, TRACES_D
 REFERENCE_SETTINGS = {"max_iters": 50, "osd_order": 7, "bp_method": "minimum_sum",
                       "osd_method": "osd_cs", "alpha": 0.625}
 PCTS = (50, 90, 99, 99.9)
+LONG_CALL_NS = 1e9   # a warm-up BP+OSD call slower than this: time each shot once, not best of N
 
 
 def decoders(H, priors, settings: dict) -> tuple[BpDecoder, BpOsdDecoder]:
@@ -62,8 +68,10 @@ def measure_osd(H, priors, dets: np.ndarray, settings: dict | None = None, *,
 
     Shots are visited in a SEED_TEST-seeded random order. With budget_s, scanning for OSD shots
     and timing them stop once the budget is spent (after at least min_shots are timed), so large
-    graphs, where one OSD call takes seconds, still finish. Returns the osd_<tag>.json payload
-    (osd_ns percentiles, BP-only and BP+OSD percentiles, counts, settings, CPU provenance).
+    graphs, where one OSD call takes seconds, still finish; when the warm-up call takes longer than
+    LONG_CALL_NS, each shot is timed once (repeats = 1), as P1 times bposd_cpu.
+    Returns the osd_<tag>.json payload (osd_ns percentiles, BP-only and BP+OSD percentiles,
+    counts, settings, CPU provenance, timed shot ids with their BP+OSD times).
     """
     settings = settings or REFERENCE_SETTINGS
     bp, bposd = decoders(H, priors, settings)
@@ -85,7 +93,9 @@ def measure_osd(H, priors, dets: np.ndarray, settings: dict | None = None, *,
     if not found:
         raise ValueError("no shot fell back to OSD; nothing to time")
 
-    paired_time(bp, bposd, dets[found[0]], repeats=1)   # warm-up, not timed
+    _, t_warm = paired_time(bp, bposd, dets[found[0]], repeats=1)   # warm-up, not kept
+    if t_warm > LONG_CALL_NS:
+        repeats = 1
     t_bp, t_all, mismatch = [], [], 0
     for k, i in enumerate(found):
         a, b = paired_time(bp, bposd, dets[i], repeats, first=k)
@@ -104,11 +114,36 @@ def measure_osd(H, priors, dets: np.ndarray, settings: dict | None = None, *,
         "n_test_shots": len(dets), "n_scanned": int(scanned),
         "n_osd_shots_est": round(est_osd_total), "n_timed": len(osd),
         "repeats": repeats, "budget_s": budget_s, "converge_mismatch": int(mismatch),
+        "timed_shot_ids": [int(i) for i in found[:len(osd)]],
+        "bp_osd_ns_per_shot": [float(t) for t in t_all],
         "settings": {k: settings[k] for k in REFERENCE_SETTINGS},
         "cpu": platform.processor() or platform.machine(), "threads": 1,
         "platform": platform.platform(), "ldpc": version("ldpc"),
         "timer": "time.perf_counter_ns around decoder.decode, best of repeats, after one warm-up",
     }
+
+
+def file_sha256(path) -> str:
+    """Hex SHA-256 of a file: ties an OSD measurement to the exact TEST shots it timed."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def cpu_ratio(res: dict, ref_latency_ns: np.ndarray) -> float:
+    """Median over the timed shots of ref BP+OSD time / our BP+OSD time on that same shot.
+
+    ref_latency_ns is P1's MEASURED bposd_cpu wall clock per TEST shot (bposd_latency_<tag>.npz,
+    indexed by shot_id). osd_ns * ratio is our paired OSD time expressed on P1's CPU.
+    """
+    ids = np.asarray(res["timed_shot_ids"], dtype=np.int64)
+    ours = np.asarray(res["bp_osd_ns_per_shot"], dtype=np.float64)
+    ref = np.asarray(ref_latency_ns, dtype=np.float64)
+    if len(ids) == 0 or len(ids) != len(ours) or ids.max() >= len(ref):
+        raise ValueError("timed shots do not match the reference latencies")
+    return float(np.median(ref[ids] / ours))
 
 
 def write_osd(w, max_shots: int = 2000, repeats: int = 3, budget_s: float | None = None):
@@ -121,6 +156,7 @@ def write_osd(w, max_shots: int = 2000, repeats: int = 3, budget_s: float | None
     else:
         settings, src = REFERENCE_SETTINGS, "osd_timing.REFERENCE_SETTINGS (P1 DAY2_HANDOFF)"
     res = {"tag": w.tag, "settings_source": src,
+           "shots_sha256": file_sha256(SHOTS_DIR / f"{w.tag}.npz"),
            **measure_osd(g["H"], g["priors"], dets, settings, max_shots=max_shots,
                          repeats=repeats, budget_s=budget_s)}
     path = COSTS_DIR / f"osd_{w.tag}.json"
