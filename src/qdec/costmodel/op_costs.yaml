@@ -1,6 +1,8 @@
 # OWNER: P2
-# Per-operation hardware costs. Every number here is MODELED, never measured.
-# Fill latency_ns / energy_pj and replace source with a citation (paper, table, page).
+# Per-operation costs. Every number is MODELED from the cited source, except status PUBLISHED
+# (a paper's own reported hardware/simulator number) and osd_ns (a fallback; the real value is
+# measured per workload). `cite` is the short form for slides; `source` is the full citation.
+# src/qdec/costmodel/SOURCES.md is generated from this file (scripts/p2_cost_sources.py).
 # Units: latency_ns per operation; energy_pj per operation (per byte for dram_*).
 #
 # Per-op units (see `unit` on each entry):
@@ -23,6 +25,7 @@ sram_xor:
   source: >-
     Aga et al., "Compute Caches," HPCA 2017 (in-place bitwise ops on SRAM bitlines);
     energy derived from Horowitz, "Computing's Energy Problem," ISSCC 2014 (8 KB SRAM read)
+  cite: "Aga et al., HPCA 2017; Horowitz, ISSCC 2014"
   status: VERIFY
   note: "Check the Compute Caches latency/energy table for the bitwise-op cost relative to a read."
 
@@ -33,6 +36,7 @@ sram_min_search:
   source: >-
     Eckert et al., "Neural Cache: Bit-Serial In-Cache Acceleration of Deep Neural Networks,"
     ISCA 2018 (bit-serial comparison, used for max-pooling); energy as for sram_xor
+  cite: "Eckert et al., ISCA 2018; Horowitz, ISSCC 2014"
   status: VERIFY
   note: "Confirm Neural Cache's per-step cost for comparison/reduction ops."
 
@@ -43,6 +47,7 @@ bitserial_add:
   source: >-
     Eckert et al., "Neural Cache," ISCA 2018 (bit-serial add takes n+1 cycles);
     energy as for sram_xor
+  cite: "Eckert et al., ISCA 2018; Horowitz, ISSCC 2014"
   status: VERIFY
   note: "Confirm Neural Cache's array cycle time and per-cycle energy; 1 ns is a conservative pick."
 
@@ -53,6 +58,7 @@ convergence_or_reduce:
   source: >-
     Aga et al., "Compute Caches," HPCA 2017 (wired-OR / search-style reduction on bitlines);
     estimate = one row step + small OR tree
+  cite: "Aga et al., HPCA 2017 (our estimate)"
   status: VERIFY
   note: "Estimate, not a table value. Replace with a direct number if you find one."
 
@@ -63,6 +69,7 @@ cam_search:
   source: >-
     Pagiamtzis and Sheikholeslami, "Content-Addressable Memory (CAM) Circuits and
     Architectures: A Tutorial and Survey," IEEE JSSC 41(3), 2006
+  cite: "Pagiamtzis & Sheikholeslami, JSSC 2006"
   status: VERIFY
   note: "Check the survey's reported energy/bit/search and search time for the design you cite."
 
@@ -73,6 +80,7 @@ dram_read_byte:
   source: >-
     Energy: Horowitz, ISSCC 2014 (DRAM 1.3-2.6 nJ per 64-bit access, midpoint / 8 bytes).
     Latency: 1 / 25.6 GB/s, one DDR4-3200 x64 channel (JEDEC JESD79-4)
+  cite: "Horowitz, ISSCC 2014; JEDEC JESD79-4"
   status: CHECKED
   note: "Horowitz is 45 nm-era DRAM; modern DDR4/HBM is lower energy. Say so on the slide."
 
@@ -81,6 +89,7 @@ dram_write_byte:
   energy_pj: 244.0
   unit: "per byte streamed"
   source: "Same as dram_read_byte (writes modeled at read cost)"
+  cite: "Horowitz, ISSCC 2014; JEDEC JESD79-4"
   status: CHECKED
   note: "Symmetric read/write is a simplification."
 
@@ -93,6 +102,7 @@ l2_byte:
     Energy: Horowitz, ISSCC 2014 (1 MB cache, 64-bit access ~100 pJ -> 12.5 pJ/byte).
     Latency: 1 / (64 B/cycle at 3 GHz), peak L2 bandwidth per core in the Intel 64 and IA-32
     Architectures Optimization Reference Manual (Skylake server cache table)
+  cite: "Horowitz, ISSCC 2014; Intel Optimization Manual"
   status: VERIFY
   note: "Peak, not sustained, bandwidth (favours the CPU baseline). Capacity 1 MB = Horowitz's array size."
 
@@ -103,6 +113,7 @@ cpu_core_ns:
   source: >-
     ASSUMED single-core active power of 10 W, the same assumption as osd_ns; used only to turn
     MEASURED bposd_cpu wall clock into energy
+  cite: "Assumed (10 W per busy core)"
   status: VERIFY
   note: "Replace with the measuring CPU's package power / active cores if available."
 
@@ -113,15 +124,60 @@ cpu_op:
   source: >-
     Latency: 1 cycle at an assumed 3 GHz. Energy: Horowitz, ISSCC 2014 (~70 pJ per
     instruction including fetch/decode/register-file overhead; the 32-bit add itself is 0.1 pJ)
+  cite: "Horowitz, ISSCC 2014; 3 GHz assumed"
   status: VERIFY
   note: "Confirm the ~70 pJ instruction-overhead figure on the Horowitz slide."
+
+# ---------------------------------------------------------------- published-number baselines
+# status PUBLISHED = taken from the cited paper's own hardware/simulator, NOT modeled by us.
+# Both are applied per BP iteration to OUR quantized min-sum iteration trace (same shots, same
+# iteration counts, same CPU OSD fallback as every other system), so only the iteration time
+# differs between systems. energy_pj .nan = not reported by the paper (NaN in service rows).
+
+relay_fpga_iter:
+  latency_ns: 24.0
+  energy_pj: 1392600.0
+  unit: "per BP iteration; energy = 24 ns x 58.025 W total FPGA power"
+  source: >-
+    Maurer et al., "Real-time decoding of the gross code memory with FPGAs," arXiv:2510.21600
+    (2025): Relay-BP on an AMD VU19P, 2 cycles of a 12 ns decoder clock per flooding iteration
+    = 24 ns; 58.025 W total power after place and route (Fig. 5)
+  cite: "Maurer et al., arXiv:2510.21600"
+  status: PUBLISHED
+  note: >-
+    Gross-code X decoder. Reused unchanged for the surface code (assumes a fully parallel design
+    of that size fits). Relay-BP's own iteration counts (about 20 on average at p = 1e-3 per the
+    paper) are not used; ours are.
+
+nearmem_dpu_iter:
+  latency_ns: 174600.0
+  energy_pj: .nan
+  unit: "per BP iteration (X + Z, serialized) = 0.873 ms / 5 iterations"
+  source: >-
+    Seo, Han, Hour, Kim, "High-Throughput Normalized Min-Sum Belief Propagation Decoding for
+    Quantum LDPC Codes with Near-Memory Processing," arXiv:2608.27901 (2026): maximum sampled
+    serialized X+Z DPU compute latency about 0.873 ms at five iterations (uPIMulator, UPMEM DPUs,
+    11 tasklets per DPU)
+  cite: "Seo et al., arXiv:2608.27901"
+  status: PUBLISHED
+  note: >-
+    Simulated, not measured on hardware. Data-qubit noise graph of [[144,12,12]] (much smaller
+    than our circuit-level graphs), so applying it unscaled is optimistic for the DPU. A maximum,
+    not a mean. Energy not reported.
 
 osd_ns:
   latency_ns: 100000.0
   energy_pj: 1.0e+9
-  unit: "per OSD call on the CPU"
+  unit: "per OSD call on the CPU (FALLBACK only; see source)"
   source: >-
-    PLACEHOLDER pending P1's measured ldpc BP+OSD time. Energy = latency * 10 W
-    (assumed single-core power)
+    Per workload the service tables use a MEASURED-derived value instead: the median of paired
+    per-shot ldpc timings, t(BpOsdDecoder) - t(BpDecoder) on the same non-converged TEST
+    syndrome, with P1's bposd_cpu settings (scripts/p2_measure_osd.py -> data/costs/osd_<tag>.json).
+    This constant is an ASSUMED fallback used only when no measurement exists for a tag.
+    Energy = time * 10 W (cpu_core_ns)
+  cite: "Measured here (paired ldpc timing); constant = fallback"
   status: VERIFY
-  note: "Replace latency_ns with P1's measured median OSD time at the Day 2 merge."
+  note: >-
+    Measured on Intel x86 (2026-11-03), one thread: about 3.3 ms at d5 and 32 ms at d7, so this
+    fallback is far too low for those graphs. The median ignores OSD timing tails; report the
+    osd_<tag>.json p99 alongside.

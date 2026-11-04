@@ -6,7 +6,7 @@ import pytest
 
 from qdec.cache.cam import ClusterCache, Entry
 from qdec.cache.devshots import sample_dev_shots
-from qdec.cache.keys import canonical_key
+from qdec.cache.keys import canonical_key, is_isolated
 from qdec.cache.splitter import Cluster
 from qdec.contracts import CACHE_COLS, SEED_TEST, SEED_TRAIN
 
@@ -76,6 +76,33 @@ def test_hit_rate_and_ler_sane(built):
     assert cache.size() > 0 and cache.key_bits() > 0
     assert 0.5 < df["cache_hit"][nonempty].mean() < 1.0      # d=5 p=1e-3: most shots hit
     assert df["fail_cache"].sum() <= 1                        # local corrections are ~never wrong
+
+
+def test_isolation_flags_match_is_isolated(built):
+    cache, splits, _ = built
+    multi = [s for s in splits if len(s.clusters) > 1]
+    assert len(multi) > 50
+    for s in multi:
+        assert s.isolated == [is_isolated(c, s.clusters, cache.boundary) for c in s.clusters]
+
+
+def test_cluster_status_agrees_with_evaluate(built):
+    cache, splits, df = built
+    for s, hit in zip(splits, df["cache_hit"]):
+        st = cache.cluster_status(s)
+        assert len(st) == len(s.clusters)
+        assert set(st) <= {"hit", "CAM miss", "not isolated", "too big", "no fit"}
+        assert hit == all(x == "hit" for x in st)
+
+
+def test_capped_build_keeps_most_frequent_keys(built, shots):
+    full, _, _ = built
+    tr = shots["train"]
+    capped = ClusterCache(tr, tr["det_coords"], max_entries=20)
+    capped.build(tr, TRAIN_TAG)
+    assert capped.size() <= 20 and len(capped.entries) <= 20
+    top = sorted(full.entries.items(), key=lambda kv: (-kv[1].count, kv[0]))[:capped.size()]
+    assert set(capped.entries) == {k for k, _ in top}
 
 
 def test_resize_is_monotone(built, shots):

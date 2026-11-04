@@ -20,13 +20,19 @@ import pandas as pd
 import scipy.sparse as sp
 from ldpc import BpOsdDecoder
 
-from qdec.cache.keys import Boundary, canonical_key, is_isolated, sorted_grid
+from qdec.cache.keys import Boundary, canonical_key, isolation_flags, sorted_grid
 from qdec.cache.splitter import Cluster, detector_adjacency, find_clusters
 from qdec.contracts import CACHE_COLS, SEED_TEST, SEED_TRAIN
 
 # Build-time local decoder (runs once per key on TRAIN, never on the test path).
 LOCAL_MAX_ITERS = 50
 LOCAL_OSD_ORDER = 10
+# CAM design point: on QUICK_GRID every tag's hit rate saturates by 16384 entries
+# (data/p2/cache_sweep.csv), and the cap bounds build time on FULL_GRID.
+DEFAULT_CAM_ENTRIES = 16384
+# Codes the cache is built for. Keys rely on the surface code's lattice translation symmetry,
+# which is untested for the gross code, so gross runs PIM-BP without a cache (P2 guide fallback).
+CACHEABLE_CODES = ("surface",)
 
 
 @dataclass
@@ -90,18 +96,19 @@ class ClusterCache:
         self.n_dropped = 0
 
     # ------------------------------------------------------------------ split
-    def split(self, shots: dict) -> list[ShotSplit]:
-        """Clusters, keys and isolation flags for every shot (reusable across max_entries)."""
+    def iter_split(self, shots: dict):
+        """Clusters, keys and isolation flags, one ShotSplit per shot, computed lazily."""
         if not np.array_equal(np.asarray(shots["det_coords"]), self.det_coords, equal_nan=True):
             raise ValueError("shots were sampled from a different circuit than this cache's graph")
-        out = []
         for row in np.asarray(shots["dets"], dtype=bool):
             cl = find_clusters(row, self.det_coords, self.adjacency)
             keys = [canonical_key(c, self.boundary) if len(c.det_ids) <= self.max_cluster_size
                     else None for c in cl]
-            iso = [is_isolated(c, cl, self.boundary) for c in cl] if len(cl) > 1 else [True] * len(cl)
-            out.append(ShotSplit(cl, keys, iso))
-        return out
+            yield ShotSplit(cl, keys, isolation_flags(cl, self.boundary))
+
+    def split(self, shots: dict) -> list[ShotSplit]:
+        """All of iter_split in memory (reusable across max_entries; QUICK_GRID sizes only)."""
+        return list(self.iter_split(shots))
 
     # ------------------------------------------------------------------ build
     def build(self, train_shots: dict, tag: str, splits: list[ShotSplit] | None = None) -> None:
@@ -110,32 +117,36 @@ class ClusterCache:
         Inputs:  dict from io.load_npz(SHOTS_DIR / f"{tag}.npz") for a SEED_TRAIN workload
                  (keys dets, obs, det_coords) and that workload's tag.
         Outputs: none (fills the CAM). Raises ValueError for a SEED_TEST tag.
+                 Keys are decoded most frequent first and only until max_entries are stored,
+                 so resize() can shrink the CAM afterwards but not grow it past max_entries.
         """
         if not tag.endswith(f"_s{SEED_TRAIN}"):
             raise ValueError(f"cache must be built on SEED_TRAIN shots only, got {tag!r}")
         self._train_fp = _fingerprint(train_shots["dets"])
-        splits = splits if splits is not None else self.split(train_shots)
 
         counts: Counter[bytes] = Counter()
         example: dict[bytes, Cluster] = {}
-        for s in splits:
+        singles = []    # (key, cluster, obs) of single-cluster TRAIN shots, for the replay check
+        obs = np.asarray(train_shots["obs"], dtype=bool)
+        for s, o in zip(splits if splits is not None else self.iter_split(train_shots), obs):
             for c, k in zip(s.clusters, s.keys):
                 if k is not None:
                     counts[k] += 1
                     example.setdefault(k, c)
+            if len(s.clusters) == 1 and s.keys[0] is not None:
+                singles.append((s.keys[0], s.clusters[0], o))
         self.entries = {}
-        for k, n in counts.items():
+        for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            if self.max_entries is not None and len(self.entries) >= self.max_entries:
+                break
             faults = self._local_correction(example[k])
             if faults is not None:
                 self.entries[k] = Entry(faults, count=n)
 
-        obs = np.asarray(train_shots["obs"], dtype=bool)
-        for s, o in zip(splits, obs):
-            if len(s.clusters) == 1 and (e := self.entries.get(s.keys[0])) is not None:
-                flips = self._replay(e, s.clusters[0])
-                if flips is not None:
-                    e.checked += 1
-                    e.wrong += bool((flips != o).any())
+        for k, c, o in singles:
+            if (e := self.entries.get(k)) is not None and (flips := self._replay(e, c)) is not None:
+                e.checked += 1
+                e.wrong += bool((flips != o).any())
         bad = [k for k, e in self.entries.items() if 2 * e.wrong > e.checked]
         for k in bad:
             del self.entries[k]
@@ -161,9 +172,12 @@ class ClusterCache:
         sub = self.H[near_ids][:, cols]
         syn = np.zeros(len(near_ids), dtype=np.uint8)
         syn[np.searchsorted(near_ids, cl.det_ids)] = 1
+        # omp_thread_count=1: ldpc's threaded path crashed (access violation) under CPU load on
+        # FULL_GRID d13; one thread is also faster on these small local matrices
         dec = BpOsdDecoder(sub, error_channel=list(self.priors[cols]), max_iter=LOCAL_MAX_ITERS,
                            bp_method="product_sum", osd_method="osd_cs",
-                           osd_order=min(LOCAL_OSD_ORDER, max(0, len(cols) - len(near_ids))))
+                           osd_order=min(LOCAL_OSD_ORDER, max(0, len(cols) - len(near_ids))),
+                           omp_thread_count=1)
         e = np.asarray(dec.decode(syn), dtype=np.uint8)
         if not np.array_equal(sub @ e % 2, syn):
             return None
@@ -202,6 +216,22 @@ class ClusterCache:
         """Number of CAM entries (for the CAM-size vs hit-rate plot)."""
         return len(self._active)
 
+    def cluster_status(self, split: ShotSplit) -> list[str]:
+        """Why each cluster of one shot would or would not be served (demo / reporting):
+        "hit", "CAM miss", "not isolated", "too big" (> max_cluster_size) or "no fit" (cached
+        shape does not fit here). Unlike evaluate(), every cluster is checked, no early exit."""
+        out = []
+        for c, k, iso in zip(split.clusters, split.keys, split.isolated):
+            if k is None:
+                out.append("too big")
+            elif not iso:
+                out.append("not isolated")
+            elif (e := self._active.get(k)) is None:
+                out.append("CAM miss")
+            else:
+                out.append("hit" if self._replay(e, c) is not None else "no fit")
+        return out
+
     def key_bits(self) -> int:
         """CAM word width: the longest active key, in bits (search energy scales with it)."""
         return 8 * max((len(k) for k in self._active), default=0)
@@ -223,13 +253,13 @@ class ClusterCache:
             raise RuntimeError("build() the cache before evaluate()")
         if _fingerprint(test_shots["dets"]) == self._train_fp:
             raise ValueError("test shots are identical to the TRAIN shots the cache was built on")
-        splits = splits if splits is not None else self.split(test_shots)
         obs = np.asarray(test_shots["obs"], dtype=bool)
-        n = len(splits)
-        n_lookups = np.zeros(n, dtype=np.int32)
-        hit = np.zeros(n, dtype=bool)
-        fail = pd.array([pd.NA] * n, dtype="boolean")
-        for i, s in enumerate(splits):
+        n = len(obs)
+        n_clusters, max_size, n_lookups = (np.zeros(n, dtype=np.int32) for _ in range(3))
+        hit, fail = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+        for i, s in enumerate(splits if splits is not None else self.iter_split(test_shots)):
+            n_clusters[i] = len(s.clusters)
+            max_size[i] = max((len(c.det_ids) for c in s.clusters), default=0)
             flips = np.zeros(obs.shape[1], dtype=bool)
             ok = True
             for c, k, iso in zip(s.clusters, s.keys, s.isolated):
@@ -244,12 +274,10 @@ class ClusterCache:
                     break
                 flips ^= f
             hit[i] = ok
-            if ok:
-                fail[i] = bool((flips != obs[i]).any())
+            fail[i] = ok and bool((flips != obs[i]).any())
         df = pd.DataFrame({
-            "shot_id": np.arange(n), "tag": tag,
-            "n_clusters": [len(s.clusters) for s in splits],
-            "max_cluster_size": [max((len(c.det_ids) for c in s.clusters), default=0) for s in splits],
-            "n_lookups": n_lookups, "cache_hit": hit, "fail_cache": fail,
+            "shot_id": np.arange(n), "tag": tag, "n_clusters": n_clusters,
+            "max_cluster_size": max_size, "n_lookups": n_lookups, "cache_hit": hit,
+            "fail_cache": pd.array(np.where(hit, fail, None), dtype="boolean"),
         })
         return df.astype(CACHE_COLS)
