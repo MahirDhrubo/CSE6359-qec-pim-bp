@@ -11,7 +11,7 @@ results/mock/ (git-ignored), with PLACEHOLDER figures for plots that don't exist
 Without --mock, inputs are data/costs/service_<tag>.parquet, data/costs/iter_costs.json and
 data/traces/functional_<tag>.parquet.
 Usage: python scripts/p3_make_results.py --grid quick|full [--mock]
-           [--latency-budget-ns 10000] [--max-iters N]
+           [--latency-budget-ns 1000000] [--max-iters N]
 """
 import argparse
 import sys
@@ -149,8 +149,8 @@ def compare_full(tag, svc, full_s, kw, full_rate, out, budget_ns) -> None:
     Also prints controller on vs off on the SAME iter_costs pricing, which isolates the
     controller's effect even when the service table and iter_costs disagree."""
     off = max_sustainable_rate(full_s, latency_budget_ns=budget_ns)
-    print(f"  full, controller on vs off (same pricing): max rate {full_rate / 1e6:.2f} vs "
-          f"{off / 1e6:.2f} MHz")
+    print(f"  full, controller on vs off (same pricing): max rate {full_rate / 1e3:,.1f} vs "
+          f"{off / 1e3:,.1f} kHz")
     pim = next((r for r in out if r["tag"] == tag and r["system"] == System.PIM_CACHE.value), None)
     if pim is None or not pim["rate_hz"] > 0:
         return
@@ -159,8 +159,8 @@ def compare_full(tag, svc, full_s, kw, full_rate, out, budget_ns) -> None:
     p_pim = pd.Series(simulate(s_pim.to_numpy(), period).latency_ns).quantile(0.999)
     p_full = pd.Series(simulate(full_s, period, **kw).latency_ns).quantile(0.999)
     better = full_rate > pim["rate_hz"] or p_full < p_pim
-    print(f"  full vs pim_cache @ {period:,.0f} ns rounds: max rate {full_rate / 1e6:.2f} vs "
-          f"{pim['rate_hz'] / 1e6:.2f} MHz, p99.9 {p_full:,.0f} vs {p_pim:,.0f} ns "
+    print(f"  full vs pim_cache @ {period:,.0f} ns rounds: max rate {full_rate / 1e3:,.1f} vs "
+          f"{pim['rate_hz'] / 1e3:,.1f} kHz, p99.9 {p_full:,.0f} vs {p_pim:,.0f} ns "
           f"-> full {'BETTER' if better else 'NOT better'} (budget {budget_ns:,.0f} ns)")
 
 
@@ -168,8 +168,9 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
     ap.add_argument("--mock", action="store_true")
-    ap.add_argument("--latency-budget-ns", type=float, default=10_000.0,
-                    help="p99.9 latency (queueing + service) a sustainable rate must meet")
+    ap.add_argument("--latency-budget-ns", type=float, default=1_000_000.0,
+                    help="p99.9 latency (queueing + service) a sustainable rate must meet; "
+                         "1 ms by team decision (no system meets 10 us on current numbers)")
     ap.add_argument("--max-iters", type=int, default=None,
                     help="BP iteration cap; inferred as max(bp_iters) per tag if omitted")
     args = ap.parse_args(argv)
@@ -197,7 +198,9 @@ def main(argv=None) -> None:
 
     rates = rate_table(service, functional, iter_costs, args.latency_budget_ns, args.max_iters)
     rates.to_csv(out_dir / "max_rate.csv", index=False)
-    crit = f"p99.9 latency <= {args.latency_budget_ns / 1e3:g} us, full uses the controller"
+    b = args.latency_budget_ns
+    budget = f"{b / 1e6:g} ms" if b >= 1e6 else f"{b / 1e3:g} us"
+    crit = f"p99.9 latency <= {budget}, full uses the controller"
     print(f"wrote {plots.plot_max_rate(rates, out_dir / 'max_rate.png', note=f'{crit}  |  {note}')}")
     backlog_figures(service, functional, iter_costs, args.max_iters, out_dir, note)
     abl = ablation_table(service, functional, iter_costs, args.max_iters)
