@@ -31,7 +31,8 @@ def make_circuit(w: Workload) -> stim.Circuit:
             before_measure_flip_probability=w.p,
         )
     if w.code == "gross":
-        raise NotImplementedError("gross [[144,12,12]] circuit not built yet (P1 Day 2/3, T14)")
+        from qdec.workload.gross import make_gross_circuit
+        return make_gross_circuit(w)
     raise ValueError(f"unknown code {w.code!r}; expected 'surface' or 'gross'")
 
 

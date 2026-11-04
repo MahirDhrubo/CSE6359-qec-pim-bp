@@ -76,3 +76,13 @@ def test_train_and_test_files_differ(made):
     test = io.load_npz(tmp / SHOTS_DIR / f"{w.tag}.npz")["dets"]
     train = io.load_npz(tmp / SHOTS_DIR / f"{dataclasses.replace(w, seed=SEED_TRAIN).tag}.npz")
     assert not np.array_equal(test, train["dets"])
+
+
+def test_code_filter_and_missing_family(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mod = _load_script()
+    monkeypatch.setattr(mod, "FULL_GRID", [dataclasses.replace(QUICK_GRID[0], shots=10)])
+    mod.main(["--grid", "full", "--code", "surface"])
+    assert (SHOTS_DIR / f"{QUICK_GRID[0].tag}.npz").exists()
+    with pytest.raises(SystemExit):
+        mod.main(["--grid", "quick", "--code", "gross"])

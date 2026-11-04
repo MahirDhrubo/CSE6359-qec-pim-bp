@@ -43,9 +43,10 @@ def test_deterministic():
     assert make_circuit(w) == make_circuit(w)
 
 
-def test_gross_not_implemented_yet():
-    with pytest.raises(NotImplementedError):
-        make_circuit(Workload("gross", 12, 1e-3, 12, 10, 0))
+def test_gross_memory_shape():
+    c = make_circuit(Workload("gross", 12, 1e-3, 12, 10, 0))
+    assert c.num_qubits == 288 and c.num_observables == 12
+    assert c.num_detectors == 144 * 12
 
 
 def test_unknown_code_rejected():

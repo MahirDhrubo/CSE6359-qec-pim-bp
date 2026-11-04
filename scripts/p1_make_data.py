@@ -11,6 +11,7 @@ import sys
 
 from qdec import io
 from qdec.contracts import FULL_GRID, GRAPHS_DIR, QUICK_GRID, SEED_TRAIN, SHOTS_DIR
+from qdec.workload.selection import select_workloads
 
 
 def graph_name(w) -> str:
@@ -21,6 +22,9 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
     ap.add_argument("--mock", action="store_true", help="no mock exists for raw shots")
+    ap.add_argument("--code", choices=("surface", "gross"), help="optional code-family subset")
+    ap.add_argument("--max-distance", type=int, help="surface distance cap; retains gross")
+    ap.add_argument("--shots", type=int, help="explicit reduced-profile shot cap")
     args = ap.parse_args(argv)
     if args.mock:
         print("p1_make_data: there is no mock for shots/graphs; nothing to do.")
@@ -31,18 +35,22 @@ def main(argv=None) -> None:
 
     io.ensure_dirs()
     grid = QUICK_GRID if args.grid == "quick" else FULL_GRID
+    try:
+        grid = select_workloads(grid, code=args.code, max_distance=args.max_distance, shots=args.shots)
+    except ValueError as e:
+        ap.error(str(e))
     for w in grid:
         for ww in (w, dataclasses.replace(w, seed=SEED_TRAIN)):
             io.save_npz(SHOTS_DIR / f"{ww.tag}.npz", **sample_shots(ww))
         g = dem_to_graph(make_circuit(w))
         io.save_npz(GRAPHS_DIR / f"{graph_name(w)}.npz", **g)
         (GRAPHS_DIR / f"{graph_name(w)}.json").write_text(json.dumps(graph_stats(g["H"])))
-        print(f"wrote {w.tag}")
+        print(f"wrote {w.tag}", flush=True)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except NotImplementedError:
-        print("p1_make_data: not implemented yet")
-        sys.exit(0)
+    except NotImplementedError as e:
+        print(f"p1_make_data: incomplete generation: {e}")
+        sys.exit(1)
