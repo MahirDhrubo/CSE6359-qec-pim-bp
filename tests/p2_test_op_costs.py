@@ -17,6 +17,17 @@ def test_every_op_has_numbers_and_source():
         assert e["source"] and "TODO" not in e["source"], op
 
 
+def test_every_op_has_a_short_cite():
+    for op, e in load_costs().items():
+        assert str(e.get("cite") or "").strip(), op
+
+
+def test_sources_md_is_up_to_date():
+    """SOURCES.md feeds the cost-model slide; regenerate with scripts/p2_cost_sources.py."""
+    from qdec.costmodel.sources import SOURCES_MD, render
+    assert SOURCES_MD.read_text(encoding="utf-8") == render(), "run scripts/p2_cost_sources.py"
+
+
 def test_no_null_or_todo_left_in_yaml():
     from pathlib import Path
 

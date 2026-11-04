@@ -216,6 +216,22 @@ class ClusterCache:
         """Number of CAM entries (for the CAM-size vs hit-rate plot)."""
         return len(self._active)
 
+    def cluster_status(self, split: ShotSplit) -> list[str]:
+        """Why each cluster of one shot would or would not be served (demo / reporting):
+        "hit", "CAM miss", "not isolated", "too big" (> max_cluster_size) or "no fit" (cached
+        shape does not fit here). Unlike evaluate(), every cluster is checked, no early exit."""
+        out = []
+        for c, k, iso in zip(split.clusters, split.keys, split.isolated):
+            if k is None:
+                out.append("too big")
+            elif not iso:
+                out.append("not isolated")
+            elif (e := self._active.get(k)) is None:
+                out.append("CAM miss")
+            else:
+                out.append("hit" if self._replay(e, c) is not None else "no fit")
+        return out
+
     def key_bits(self) -> int:
         """CAM word width: the longest active key, in bits (search energy scales with it)."""
         return 8 * max((len(k) for k in self._active), default=0)

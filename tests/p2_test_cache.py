@@ -86,6 +86,15 @@ def test_isolation_flags_match_is_isolated(built):
         assert s.isolated == [is_isolated(c, s.clusters, cache.boundary) for c in s.clusters]
 
 
+def test_cluster_status_agrees_with_evaluate(built):
+    cache, splits, df = built
+    for s, hit in zip(splits, df["cache_hit"]):
+        st = cache.cluster_status(s)
+        assert len(st) == len(s.clusters)
+        assert set(st) <= {"hit", "CAM miss", "not isolated", "too big", "no fit"}
+        assert hit == all(x == "hit" for x in st)
+
+
 def test_capped_build_keeps_most_frequent_keys(built, shots):
     full, _, _ = built
     tr = shots["train"]

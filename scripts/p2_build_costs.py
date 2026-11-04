@@ -4,7 +4,8 @@
 Writes COSTS_DIR/service_<tag>.parquet (SERVICE_COLS) and COSTS_DIR/iter_costs.json.
 Reads TRACES_DIR/functional_<tag>.parquet (P1), cache_<tag>.parquet + .json (P2) and, when present,
 P1's MEASURED TRACES_DIR/bposd_latency_<tag>.npz for the bposd_cpu rows and P2's
-COSTS_DIR/osd_<tag>.json (scripts/p2_measure_osd.py) for the OSD fallback time.
+COSTS_DIR/osd_<tag>.json for the OSD fallback time, measuring it first (--osd-budget-s per
+tag) when missing, so `make costs` from a fresh clone never silently uses the yaml fallback.
 With --mock, writes qdec.mocks.mock_service tables and placeholder iter_costs (MOCK numbers).
 Usage: python scripts/p2_build_costs.py --grid quick|full [--mock]
 """
@@ -44,20 +45,35 @@ def bposd_latency(tag: str, n: int):
     return z["latency_ns"]
 
 
-def measured_osd_ns(tag: str):
-    """Median paired OSD time from scripts/p2_measure_osd.py, or None (yaml fallback)."""
-    path = COSTS_DIR / f"osd_{tag}.json"
-    if not path.exists():
-        print(f"  {tag}: no {path.name}; osd_ns = op_costs.yaml fallback (ASSUMED), "
-              f"run scripts/p2_measure_osd.py")
+def measured_osd_ns(w, budget_s: float):
+    """Median paired OSD time for this workload (COSTS_DIR/osd_<tag>.json). A missing or stale
+    file (different shot count: QUICK and FULL share tags) is measured now within budget_s;
+    budget_s <= 0 or a failed measurement means the op_costs.yaml fallback (ASSUMED)."""
+    from qdec.costmodel.osd_timing import summary, write_osd
+
+    path = COSTS_DIR / f"osd_{w.tag}.json"
+    if path.exists():
+        res = json.loads(path.read_text())
+        if res.get("n_test_shots") == w.shots:
+            return res["osd_ns"]["p50"]
+    if budget_s <= 0:
+        print(f"  {w.tag}: no current {path.name}; osd_ns = op_costs.yaml fallback (ASSUMED)")
         return None
-    return json.loads(path.read_text())["osd_ns"]["p50"]
+    try:
+        _, res = write_osd(w, budget_s=budget_s)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"  {w.tag}: OSD not measured ({e}); osd_ns = op_costs.yaml fallback (ASSUMED)")
+        return None
+    print(f"  measured {summary(res)}", flush=True)
+    return res["osd_ns"]["p50"]
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--grid", choices=("quick", "full"), default="quick")
     ap.add_argument("--mock", action="store_true")
+    ap.add_argument("--osd-budget-s", type=float, default=60.0,
+                    help="seconds to measure OSD for a tag without osd_<tag>.json (0 = use fallback)")
     args = ap.parse_args(argv)
 
     io.ensure_dirs()
@@ -98,7 +114,7 @@ def main(argv=None) -> None:
         except FileNotFoundError as e:
             missing.append(f"{w.tag} ({e.filename})")
             continue
-        kw["osd_ns"] = measured_osd_ns(w.tag)
+        kw["osd_ns"] = measured_osd_ns(w, args.osd_budget_s)
         sdf = build_service_table(fdf, cdf, stats, costs,
                                   bposd_latency_ns=bposd_latency(w.tag, len(fdf)), **kw)
         print(f"wrote {io.write_table(sdf, SERVICE_COLS, COSTS_DIR / f'service_{w.tag}.parquet')}"
