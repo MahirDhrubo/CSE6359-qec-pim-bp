@@ -1,5 +1,13 @@
 # P1 Day 3 execution plan and checkpoint — 2026-11-03
 
+**Final update, 2026-11-04:** this document preserves the original execution
+checkpoint. All 23 reduced functional traces and all 23 CPU baselines are now
+complete and passed required-latency verification. The user delivered the partial
+package; the final CPU update ZIP is prepared separately. P1 Day 3 code is merged
+into main via PR #8. See [DAY4_COMPLETION.md](DAY4_COMPLETION.md),
+[DAY4_RUNBOOK.md](DAY4_RUNBOOK.md) and [DAY4_LER_REPORT.md](DAY4_LER_REPORT.md)
+for the final status, reproduction procedure and functional report.
+
 ## Starting state
 
 The clean P1 branch started at `d9ec9b8`, also the verified current remote main.

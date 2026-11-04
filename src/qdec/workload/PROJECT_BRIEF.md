@@ -1,5 +1,10 @@
 # DecodeCache + PIM-BP: full project brief
 
+**Later status update (2026-11-04):** all 23 reduced CPU baselines are complete.
+P1 Day 3 and P2/P3 updates have merged to main through 135b264. The historical
+status below is retained as a snapshot; use DAY4_COMPLETION.md for current
+validation scope and handoff status.
+
 **Purpose.** Load this into a Claude session so it understands the project well enough to teach it
 and help present it. Snapshot taken 2026-11-04 from the proposal, all three team branches and P1's
 data. The request behind this brief is in the last section.
