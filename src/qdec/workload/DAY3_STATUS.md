@@ -1,5 +1,12 @@
 # P1 Day 3 execution plan and checkpoint — 2026-11-03
 
+**Update, 2026-11-04:** this document preserves the original execution checkpoint.
+All 23 reduced functional traces are now complete; 22 CPU baselines are available,
+with gross p=.003 still pending at the Day 4 documentation checkpoint. Day 3 code
+was rebased and pushed through `ddfd0a2`; the user reports delivering the partial
+package. See [DAY4_RUNBOOK.md](DAY4_RUNBOOK.md) for current handoff/reproduction
+steps and [DAY4_LER_REPORT.md](DAY4_LER_REPORT.md) for the complete functional report.
+
 ## Starting state
 
 The clean P1 branch started at `d9ec9b8`, also the verified current remote main.
