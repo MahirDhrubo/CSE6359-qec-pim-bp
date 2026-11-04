@@ -239,14 +239,7 @@ def plot_ler(
              series is conditional on a cache hit (its N is the number of hits).
     Owner:   P3
     """
-    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
-    for tag in functional_dfs:
-        m = _TAG_RE.match(tag)
-        if m is None:
-            warnings.warn(f"plot_ler: skipping tag {tag!r}, not <code>_d<d>_p<p>_s<seed>",
-                          stacklevel=2)
-            continue
-        groups.setdefault((m["code"], int(m["d"])), []).append((float(m["p"]), tag))
+    groups = _tag_groups(functional_dfs, "plot_ler")
     labels = [s[0] for s in LER_SERIES]
     colors = _colors(labels)
     panels = sorted(groups)
@@ -361,9 +354,47 @@ def plot_latency_cdf(
     return _save(fig, out)
 
 
-def plot_backlog_over_time(sim_results: dict, out: Path) -> Path:
-    """Queue depth vs time per System from queue.sim.SimResult. Owner: P3."""
-    raise NotImplementedError
+def plot_backlog_over_time(
+    sim_results: dict,
+    out: Path,
+    round_period_ns: float | None = None,
+    note: str = "",
+    title: str = "Decode backlog over time",
+) -> Path:
+    """Queue depth vs decode window per System, from queue.sim.SimResult (FULL may include the
+    controller). Symlog y-axis: linear below 1 window, log above, so a stable system's small
+    queue stays visible next to an unstable one's growing backlog.
+
+    Inputs:  {system: SimResult}; round_period_ns for the subtitle (optional).
+    Outputs: PNG at `out`. Legend: peak depth, p99.9 latency (queueing + service), UNSTABLE flag.
+    Owner:   P3
+    """
+    labels = list(sim_results)
+    colors = _colors(labels)
+    fig, ax = plt.subplots(figsize=(8.5, 4.4))
+    _style(ax)
+    for lb in labels:
+        r = sim_results[lb]
+        depth = _clean(r.queue_depth, f"plot_backlog_over_time: {lb}")
+        lat = _clean(r.latency_ns, f"plot_backlog_over_time: {lb} latency")
+        if len(depth) == 0 or len(lat) == 0:
+            warnings.warn(f"plot_backlog_over_time: skipping system {lb!r}, no data", stacklevel=2)
+            continue
+        ax.step(np.arange(len(depth)), depth, where="post", color=colors[lb], linewidth=1.2,
+                label=f"{lb}: peak {int(depth.max()):,} windows, "
+                      f"p99.9 latency {np.quantile(lat, 0.999) / 1e3:,.1f} us"
+                      f"{'' if r.stable else ' (UNSTABLE)'}")
+    ax.set_yscale("symlog", linthresh=1)
+    ax.set_ylim(bottom=0)
+    ax.margins(x=0.01)
+    ax.set_xlabel("decode window (one per syndrome round)")
+    ax.set_ylabel("queue depth (windows)")
+    sub = (f"round period {round_period_ns:,.0f} ns" if round_period_ns else "") + (
+        f"  |  {note}" if note else "")
+    _titles(ax, title, sub)
+    if ax.lines:
+        _legend(ax, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=1)
+    return _save(fig, out)
 
 
 def plot_max_rate(
@@ -431,25 +462,252 @@ def plot_max_rate(
     return _save(fig, out)
 
 
-def plot_hit_rate(cache_dfs: dict[str, pd.DataFrame], out: Path) -> Path:
-    """Cache hit rate vs p and d (and vs CAM size if provided). Inputs: CACHE_COLS. Owner: P3."""
-    raise NotImplementedError
+def _tag_groups(tags, fn_name: str) -> dict[tuple[str, int], list[tuple[float, str]]]:
+    """{(code, d): [(p, tag), ...] sorted by p}; tags that don't parse are skipped with a warning."""
+    groups: dict[tuple[str, int], list[tuple[float, str]]] = {}
+    for tag in tags:
+        m = _TAG_RE.match(tag)
+        if m is None:
+            warnings.warn(f"{fn_name}: skipping tag {tag!r}, not <code>_d<d>_p<p>_s<seed>",
+                          stacklevel=3)
+            continue
+        groups.setdefault((m["code"], int(m["d"])), []).append((float(m["p"]), tag))
+    return {k: sorted(v) for k, v in sorted(groups.items())}
 
 
-def plot_bytes_energy(service_df: pd.DataFrame, out: Path) -> Path:
-    """Bytes moved and energy per decode per System (MODELED). Inputs: SERVICE_COLS. Owner: P3."""
-    raise NotImplementedError
+def plot_hit_rate(
+    cache_dfs: dict[str, pd.DataFrame],
+    out: Path,
+    note: str = "",
+    title: str = "DecodeCache hit rate",
+) -> Path:
+    """Cache hit rate vs p, one line per (code, distance), in two panels: all shots, and shots
+    with at least one cluster. Empty syndromes are always hits, so the left panel alone
+    overstates what the CAM contributes.
+
+    Inputs:  {tag: CACHE_COLS df} (cache_hit, n_clusters).
+    Outputs: PNG at `out`; points carry 95% Wilson intervals.
+    Owner:   P3
+    """
+    groups = _tag_groups(cache_dfs, "plot_hit_rate")
+    labels = [f"{c} d={d}" for c, d in groups]
+    colors = _colors(labels)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
+    panels = (("all shots", lambda df: df),
+              ("excluding empty syndromes", lambda df: df[df["n_clusters"] > 0]))
+    for ax, (name, pick) in zip(axes, panels):
+        _style(ax)
+        for (key, items), label in zip(groups.items(), labels):
+            pts = []
+            for p, tag in items:
+                hits = pick(cache_dfs[tag])["cache_hit"].dropna().astype(bool)
+                if len(hits):
+                    pts.append((p, int(hits.sum()), len(hits)))
+            if not pts:
+                warnings.warn(f"plot_hit_rate: {name}: skipping {label!r}, no data", stacklevel=2)
+                continue
+            x, k, n = zip(*pts)
+            rate = np.array(k) / np.array(n)
+            ci = np.array([wilson_interval(ki, ni) for ki, ni in zip(k, n)])
+            ax.errorbar(x, rate, yerr=[rate - ci[:, 0], ci[:, 1] - rate], color=colors[label],
+                        marker="o", markersize=5, linewidth=1.4, capsize=2, label=label,
+                        markeredgecolor=SURFACE, markeredgewidth=0.8)
+            if len(groups) <= 4:
+                ax.annotate(label, (x[-1], rate[-1]), xytext=(5, 0), textcoords="offset points",
+                            va="center", fontsize=8.5, color=INK_2)
+        ax.set_xscale("log")
+        ps = sorted({p for items in groups.values() for p, _ in items})
+        if ps:
+            ax.set_xticks(ps, [f"{p:g}" for p in ps])
+        _no_minor_labels(ax)
+        ax.set_ylim(0, 1.02)
+        ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+        ax.set_xlabel("physical error rate p")
+        ax.set_title(name, loc="left", fontsize=9, color=INK_2)
+    axes[0].set_ylabel("shots answered by the cache")
+    sub = "hit = every cluster found in the CAM and isolated; error bars: 95% Wilson" + (
+        f"  |  {note}" if note else "")
+    fig.suptitle(f"{title}\n{sub}", x=0.02, ha="left", fontsize=11, color=INK)
+    if axes[0].lines:
+        _legend(axes[1], loc="upper right")
+    fig.tight_layout()
+    return _save(fig, out)
 
 
-def plot_ablation(summary: pd.DataFrame, out: Path) -> Path:
-    """Ablation: pim_nocache -> pim_cache -> full (p99 / p99.9 and max rate). Owner: P3."""
-    raise NotImplementedError
+def plot_bytes_energy(
+    service_df: pd.DataFrame,
+    out: Path,
+    note: str = "MODELED",
+    title: str = "Data movement and energy per decode",
+) -> Path:
+    """Mean bytes moved and mean energy per decode, grouped by workload, one bar per System.
+
+    Two panels (one per measure, each its own log axis) rather than a dual-axis chart. Means are
+    the right summary here: energy and bytes add up over shots, unlike latency.
+    Inputs:  SERVICE_COLS rows (energy_nj, bytes_moved), any number of tags.
+    Outputs: PNG at `out`. A mean of exactly 0 is labelled "0" instead of vanishing on log axes.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(service_df["tag"]))
+    systems = list(dict.fromkeys(service_df["system"]))
+    colors = _colors(systems)
+    measures = (("energy_nj", "energy per decode (nJ)"), ("bytes_moved", "bytes moved per decode"))
+    fig, axes = plt.subplots(2, 1, figsize=(max(7.0, 1.3 * len(tags) + 3), 6.6), sharex=True)
+    width = 0.8 / max(1, len(systems))
+    x0 = np.arange(len(tags))
+    for ax, (col, ylabel) in zip(axes, measures):
+        _style(ax)
+        means = np.full((len(systems), len(tags)), np.nan)
+        for i, sname in enumerate(systems):
+            for j, tag in enumerate(tags):
+                g = service_df[(service_df["system"] == sname) & (service_df["tag"] == tag)]
+                v = _clean(g[col].to_numpy(), f"plot_bytes_energy: {tag}/{sname}/{col}")
+                if len(v):
+                    means[i, j] = v.mean()
+            row = means[i]
+            if not np.isfinite(row).any():
+                warnings.warn(f"plot_bytes_energy: skipping system {sname!r} for {col}, no data",
+                              stacklevel=2)
+                continue
+            xs = x0 + (i - (len(systems) - 1) / 2) * width
+            ok = np.isfinite(row) & (row > 0)
+            ax.bar(xs[ok], row[ok], width=width * 0.9, color=colors[sname], label=sname)
+            for xi, v in zip(xs[np.isfinite(row) & (row <= 0)], row[np.isfinite(row) & (row <= 0)]):
+                ax.annotate("0", (xi, 0), xycoords=("data", "axes fraction"), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7, color=INK_2)
+        ax.set_yscale("log")
+        lo, hi = _log_limits(means, pad=(0.3, 3.0))
+        ax.set_ylim(lo, hi)
+        ax.set_ylabel(ylabel)
+    axes[-1].set_xticks(x0, tags, rotation=20 if len(tags) > 4 else 0, ha="right"
+                        if len(tags) > 4 else "center", fontsize=8)
+    fig.suptitle(f"{title}\nmean over SEED_TEST shots  |  {note}", x=0.02, ha="left",
+                 fontsize=11, color=INK)
+    if axes[0].patches:
+        _legend(axes[0], loc="upper left", ncol=min(4, len(systems)))
+    fig.tight_layout()
+    return _save(fig, out)
 
 
-def plot_iters_hist(functional_df: pd.DataFrame, out: Path) -> Path:
-    """Histogram of bp_iters (log y), non-converged shots highlighted. Inputs: FUNCTIONAL_COLS.
-    Owner: P3."""
-    raise NotImplementedError
+ABLATION_METRICS = (
+    ("p999_ns", "p99.9 latency incl. queueing (ns)"),
+    ("rate_stable_hz", "max stable round rate (Hz)"),
+)
+
+
+def plot_ablation(
+    summary: pd.DataFrame,
+    out: Path,
+    note: str = "",
+    title: str = "Ablation: what each component buys",
+) -> Path:
+    """One panel per metric present in `summary` (ABLATION_METRICS), x = variant in the order
+    given (e.g. pim_nocache -> pim_cache -> full without / with controller settings), one bar
+    per workload tag. Log y-axes; non-finite or non-positive values are labelled, not dropped.
+
+    Inputs:  DataFrame with tag, variant (or system), and any of p999_ns, rate_stable_hz.
+    Outputs: PNG at `out`.
+    Owner:   P3
+    """
+    key = "variant" if "variant" in summary else "system"
+    variants = list(dict.fromkeys(summary[key]))
+    tags = list(dict.fromkeys(summary["tag"]))
+    metrics = [(c, lb) for c, lb in ABLATION_METRICS if c in summary]
+    if not metrics:
+        raise ValueError(f"summary has none of {[c for c, _ in ABLATION_METRICS]}")
+    colors = _colors(tags)
+    fig, axes = plt.subplots(len(metrics), 1, figsize=(max(7.5, 1.25 * len(variants) + 2.5),
+                                                       3.3 * len(metrics) + 1.0),
+                             sharex=True, squeeze=False)
+    width = 0.8 / max(1, len(tags))
+    x0 = np.arange(len(variants))
+    for ax, (col, ylabel) in zip(axes[:, 0], metrics):
+        _style(ax)
+        table = summary.pivot_table(index=key, columns="tag", values=col, aggfunc="first",
+                                    dropna=False).reindex(index=variants, columns=tags)
+        for j, tag in enumerate(tags):
+            v = table[tag].to_numpy(dtype=np.float64)
+            xs = x0 + (j - (len(tags) - 1) / 2) * width
+            ok = np.isfinite(v) & (v > 0)
+            if not ok.any():
+                warnings.warn(f"plot_ablation: {col}: skipping {tag!r}, no positive finite data",
+                              stacklevel=2)
+            ax.bar(xs[ok], v[ok], width=width * 0.9, color=colors[tag],
+                   label=tag if ax is axes[0, 0] else None)
+            for xi, vi in zip(xs[~ok], v[~ok]):
+                ax.annotate("n/a" if not np.isfinite(vi) else "0", (xi, 0),
+                            xycoords=("data", "axes fraction"), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7, color=INK_2)
+        ax.set_yscale("log")
+        ax.set_ylim(*_log_limits(table.to_numpy(), pad=(0.3, 3.0)))
+        ax.set_ylabel(ylabel)
+    axes[-1, 0].set_xticks(x0, variants, rotation=20, ha="right", fontsize=8.5)
+    fig.suptitle(f"{title}" + (f"\n{note}" if note else ""), x=0.02, ha="left", fontsize=11,
+                 color=INK)
+    if axes[0, 0].patches:
+        _legend(axes[0, 0], loc="upper right", ncol=min(2, len(tags)))
+    fig.tight_layout()
+    return _save(fig, out)
+
+
+def plot_iters_hist(
+    functional_df: pd.DataFrame,
+    out: Path,
+    note: str = "",
+    title: str = "BP iterations per decode window",
+) -> Path:
+    """Histogram of bp_iters (log count axis), converged vs non-converged shots in two colors;
+    one panel per tag when functional_df holds several (concatenated FUNCTIONAL_COLS tables).
+
+    Inputs:  FUNCTIONAL_COLS rows (tag, bp_iters, bp_converged).
+    Outputs: PNG at `out`. Each panel notes the share of 0-iteration (empty-syndrome) shots and
+             of non-converged shots, which pile up at the iteration cap and go to OSD.
+    Owner:   P3
+    """
+    tags = list(dict.fromkeys(functional_df["tag"])) if "tag" in functional_df else ["(all)"]
+    ncols = 1 if len(tags) == 1 else 2
+    nrows = -(-len(tags) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 3.2 * nrows + 1.0),
+                             squeeze=False, sharex=True)
+    kinds = (("converged", SERIES[0], True), ("not converged (goes to OSD)", SERIES[1], False))
+    drawn = False
+    for ax, tag in zip(axes.flat, tags):
+        _style(ax)
+        f = functional_df if tag == "(all)" else functional_df[functional_df["tag"] == tag]
+        iters = _clean(f["bp_iters"].to_numpy(), f"plot_iters_hist: {tag}")
+        conv = f["bp_converged"].to_numpy(dtype=bool)[np.isfinite(f["bp_iters"].to_numpy(float))]
+        ax.set_title(tag, loc="left", fontsize=9, color=INK_2)
+        if len(iters) == 0:
+            warnings.warn(f"plot_iters_hist: skipping {tag!r}, no data", stacklevel=2)
+            ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center", color=MUTED)
+            continue
+        edges = np.arange(-0.5, iters.max() + 1.5)
+        for name, color, flag in kinds:
+            sel = iters[conv == flag]
+            if len(sel):
+                ax.hist(sel, bins=edges, color=color, label=name, rwidth=0.85)
+                drawn = True
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=0.7)
+        ax.text(0.62, 0.95, f"0 iterations (empty syndrome): {np.mean(iters == 0):.1%}\n"
+                f"not converged: {np.mean(~conv):.1%}", transform=ax.transAxes, ha="center",
+                va="top", fontsize=8, color=INK_2,
+                bbox={"fc": SURFACE, "ec": "none", "pad": 1.0})
+    for ax in axes.flat[len(tags):]:
+        ax.set_visible(False)
+    for ax in axes[-1]:
+        ax.set_xlabel("BP iterations")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("shots (log)")
+    fig.suptitle(f"{title}" + (f"\n{note}" if note else ""), x=0.02, ha="left", fontsize=11,
+                 color=INK)
+    if drawn:
+        handles, names = axes.flat[0].get_legend_handles_labels()
+        leg = fig.legend(handles, names, loc="lower center", ncol=2, fontsize=8, frameon=False)
+        for t in leg.get_texts():
+            t.set_color(INK_2)
+    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    return _save(fig, out)
 
 
 ALL_PLOTS = (
