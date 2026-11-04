@@ -1,9 +1,11 @@
 # P1 Day 4: verify, hand off, and freeze
 
 Status checkpoint: 2026-11-04. The user has delivered the partial package.
-P1's functional work is complete for the reduced profile. The last gross CPU
-measurement is pending. A clean-environment reproduction and P2/P3 integration
-have not been performed by this checkpoint. No full fresh-simulation claim is made.
+P1's functional and CPU baseline datasets are complete for the reduced profile.
+All 23 workloads passed verification with required CPU latency. P1 data replay
+passed from a separate clean source checkout using the existing .venv; this is
+not a fresh-environment installation or a full fresh-simulation claim.
+See DAY4_COMPLETION.md for the bounded regeneration evidence and remaining team steps.
 
 ## Frozen profile and evidence
 
@@ -23,16 +25,17 @@ have not been performed by this checkpoint. No full fresh-simulation claim is ma
 - Delivered base: `p1_day3_reduced_1000_partial_20261104_015922.zip`.
   Includes 46 shot NPZs, 23 graph NPZ/JSON pairs, 23 functional Parquet/JSON pairs,
   and 22 CPU latency NPZ/JSON pairs. Its manifest and SHA256SUMS identify the files.
-- Pending pair: `data/traces/bposd_latency_gross_d12_p0.003_s2000.npz` and `.json`.
+- Final update pair (now available): `data/traces/bposd_latency_gross_d12_p0.003_s2000.npz` and `.json`.
 - Raw data is git-ignored; the committed report is `DAY4_LER_REPORT.md`.
 
-## Fast path from a clean checkout (procedure; not yet executed)
+## Fast path from a clean checkout
 
 Use a separate checkout so Day 2, nominal full-count and reduced datasets cannot
 silently overwrite one another. Record the exact published P1 Day 4 commit and
 integrated P2/P3 commit used; the branch name alone is not a frozen revision.
 
-Create an environment with Python 3.13.1, then from the checkout root:
+The separate-checkout replay used the existing .venv. For a genuinely fresh
+environment (not tested here), create Python 3.13.1, then from the checkout root:
 
 ```sh
 python3.13 -m venv .venv
@@ -84,14 +87,16 @@ These are downstream instructions, not a claim that the integrated full run has
 passed. P2/P3 own missing implementations and fixes. Their real-data readers
 consume actual file row counts; do not use MOCK to fill gaps. Validate every
 selected (tag, system) against 1,000 TEST shot IDs and distinguish intentionally
-unsupported systems from missing results. Gross cache isolation needs P2's review;
-a surface-only cache fallback must be disclosed rather than assuming validity.
+unsupported systems from missing results. The merged P2 implementation uses a surface-only cache fallback; gross cache
+rows must not be presented as an implemented cache result. The current costs
+script can measure missing OSD calibration data (default 60 seconds per tag);
+this downstream step can take tens of minutes and was not run by P1.
 P3 must regenerate the affected service-based figures after P2 adds the final
 CPU baseline rows. P1 does not edit their code or slides.
 
 ## Independent regeneration check (after timing ends)
 
-Recommended bounded check: surface d5/p=.003, surface d13/p=.005 and gross
+Implemented bounded check (`scripts/p1_reproduce_subset.py`): surface d5/p=.003, surface d13/p=.005 and gross
 p=.003, using the same environment and seeds. Regenerate 1,000-shot inputs for
 those tags in a separate scratch directory and compare arrays (including sparse
 H/L structure and values) with the delivered inputs. Keep the same sample count;
@@ -130,10 +135,11 @@ Do not silently drop slow samples or claim an otherwise idle-machine benchmark.
 
 ## Honest Day 4 completion statement
 
-Until executed, call the above a reproduction procedure, not successful evidence.
-After data replay and selected regeneration checks actually pass, the fallback
-statement is: "Results reproduced from the frozen reduced dataset, with selected
+Use DAY4_COMPLETION.md to distinguish executed checks from procedures.
+The fallback statement after replay and selected checks pass is: "Results reproduced from the frozen reduced dataset, with selected
 independent regeneration checks; no complete fresh simulation rerun."
 This differs from the guide's full fresh-run requirement and needs team agreement.
-Remaining external steps: integrated main merge, downstream replay, slide integration
-and final data update. The partial package has already been delivered by the user.
+The original P1 Day 3 implementation is merged into main (PR #8); current
+main also includes P2/P3 updates through 135b264. Remaining team steps: merge
+this final P1 documentation/check script, downstream replay, slide integration
+and delivery of the final data update. The partial package has already been delivered by the user.

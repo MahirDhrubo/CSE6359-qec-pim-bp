@@ -1,0 +1,88 @@
+{
+  "scope": "partial regeneration; existing environment, separate source checkout",
+  "source_root": "/Users/nazmul/Documents/githubs/CSE6359-qec-pim-bp/data/day4_reproduction/source",
+  "source_revision": "c8b156f00ed7478211364c71e081c9f67f3087d3",
+  "versions": {
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "stim": "1.16.0",
+    "ldpc": "2.4.1",
+    "pymatching": "2.4.0",
+    "pandas": "3.1.0",
+    "python": "3.13.1"
+  },
+  "results": [
+    {
+      "tag": "surface_d5_p0.003_s2000",
+      "input_shots_per_seed": 1000,
+      "decoded_shot_ids": [
+        0,
+        66,
+        133,
+        199,
+        266,
+        333,
+        399,
+        466,
+        532,
+        599,
+        666,
+        732,
+        799,
+        865,
+        932,
+        999
+      ],
+      "arrays_and_graph": "PASS",
+      "all_functional_columns": "PASS"
+    },
+    {
+      "tag": "surface_d13_p0.005_s2000",
+      "input_shots_per_seed": 1000,
+      "decoded_shot_ids": [
+        0,
+        66,
+        133,
+        199,
+        266,
+        333,
+        399,
+        466,
+        532,
+        599,
+        666,
+        732,
+        799,
+        865,
+        932,
+        999
+      ],
+      "arrays_and_graph": "PASS",
+      "all_functional_columns": "PASS"
+    },
+    {
+      "tag": "gross_d12_p0.003_s2000",
+      "input_shots_per_seed": 1000,
+      "decoded_shot_ids": [
+        0,
+        66,
+        133,
+        199,
+        266,
+        333,
+        399,
+        466,
+        532,
+        599,
+        666,
+        732,
+        799,
+        865,
+        932,
+        999
+      ],
+      "arrays_and_graph": "PASS",
+      "all_functional_columns": "PASS"
+    }
+  ]
+}

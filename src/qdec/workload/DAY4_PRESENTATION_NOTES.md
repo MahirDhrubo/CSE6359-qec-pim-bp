@@ -52,9 +52,9 @@ validation as separate evidence; do not pool its 20,000-shot rows into this swee
 ## Handoff message (draft for the user to send)
 
 "The P1 partial package is delivered: all 23 workloads' shots, graphs and functional
-traces at 1,000 shots per seed, plus 22 CPU baselines. Please use this coherent
-profile and preserve tag/shot_id alignment. The last gross CPU measurement will
-follow as an NPZ/JSON update; rebuild its CPU service rows and affected plots then.
+traces at 1,000 shots per seed, plus the now-complete set of 23 CPU baselines (base package plus final update). Please use this coherent
+profile and preserve tag/shot_id alignment. The final gross CPU measurement is supplied as an NPZ/JSON update; rebuild
+its CPU service rows and affected plots after applying it.
 The LER table, histograms and presentation caveats are in P1's DAY4_LER_REPORT.md
 and DAY4_PRESENTATION_NOTES.md. A fresh-clone replay procedure is in DAY4_RUNBOOK.md;
-that procedure is not yet a claim of completed independent reproduction."
+see DAY4_COMPLETION.md for executed replay and selected regeneration checks."

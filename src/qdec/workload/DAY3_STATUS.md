@@ -1,11 +1,12 @@
 # P1 Day 3 execution plan and checkpoint — 2026-11-03
 
-**Update, 2026-11-04:** this document preserves the original execution checkpoint.
-All 23 reduced functional traces are now complete; 22 CPU baselines are available,
-with gross p=.003 still pending at the Day 4 documentation checkpoint. Day 3 code
-was rebased and pushed through `ddfd0a2`; the user reports delivering the partial
-package. See [DAY4_RUNBOOK.md](DAY4_RUNBOOK.md) for current handoff/reproduction
-steps and [DAY4_LER_REPORT.md](DAY4_LER_REPORT.md) for the complete functional report.
+**Final update, 2026-11-04:** this document preserves the original execution
+checkpoint. All 23 reduced functional traces and all 23 CPU baselines are now
+complete and passed required-latency verification. The user delivered the partial
+package; the final CPU update ZIP is prepared separately. P1 Day 3 code is merged
+into main via PR #8. See [DAY4_COMPLETION.md](DAY4_COMPLETION.md),
+[DAY4_RUNBOOK.md](DAY4_RUNBOOK.md) and [DAY4_LER_REPORT.md](DAY4_LER_REPORT.md)
+for the final status, reproduction procedure and functional report.
 
 ## Starting state
 
